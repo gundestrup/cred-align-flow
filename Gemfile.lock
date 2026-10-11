@@ -23,12 +23,19 @@ GEM
       rb_sys (~> 0.9.91)
     itsi-scheduler (0.2.27-arm64-darwin)
       rb_sys (~> 0.9.91)
+    itsi-scheduler (0.2.27-x86_64-linux)
+      rb_sys (~> 0.9.91)
     itsi-server (0.2.27)
       json (~> 2)
       prism (~> 1.4)
       rack (>= 1.6)
       rb_sys (~> 0.9.91)
     itsi-server (0.2.27-arm64-darwin)
+      json (~> 2)
+      prism (~> 1.4)
+      rack (>= 1.6)
+      rb_sys (~> 0.9.91)
+    itsi-server (0.2.27-x86_64-linux)
       json (~> 2)
       prism (~> 1.4)
       rack (>= 1.6)
@@ -95,6 +102,7 @@ GEM
 PLATFORMS
   arm64-darwin-25
   ruby
+  x86_64-linux-gnu
 
 DEPENDENCIES
   bundler-audit
@@ -119,8 +127,10 @@ CHECKSUMS
   itsi (0.2.27) sha256=7c7078a36977b08097829ad155fe1213eb71ff1fade32c6f8f828eda0fafd360
   itsi-scheduler (0.2.27) sha256=0dca49439f3d69b900f30c4e228950d251e8d61e4913e361d3077900d129006f
   itsi-scheduler (0.2.27-arm64-darwin) sha256=df94544ea847012435c381cf3f5327bf8ea9927ec5b9777f922379eab0c406ff
+  itsi-scheduler (0.2.27-x86_64-linux) sha256=8d6806a443c939672d00dbe443615ac1b78e216d58446f64dd47fdaa459d894e
   itsi-server (0.2.27) sha256=074c5cee86a144c08e204c200acfd837fa54900ed6783425c03e5f87c6cf8059
   itsi-server (0.2.27-arm64-darwin) sha256=f68145f4aaa16770d96f64bde648ae82f7e9426556042f067c0dc416f6a13d21
+  itsi-server (0.2.27-x86_64-linux) sha256=e1f97bb29a8156748eca97d804b33a1095bd7e4f8cb2b86d6e6f865cb9d709f0
   json (2.21.2) sha256=1f1d3b7cf2b3ba1a69beca0bb6db13d5438b80bff3cd54cdaaa620b9b07c1c6a
   language_server-protocol (3.17.0.6) sha256=5ef2c0c138f8267e1bc631d3328347d354f96724b0af22f2c79516120443b7f0
   lint_roller (1.1.0) sha256=2c0c845b632a7d172cb849cc90c1bce937a28c5c8ccccb50dfd46a485003cc87
@@ -150,6 +160,9 @@ CHECKSUMS
   tsort (0.2.0) sha256=9650a793f6859a43b6641671278f79cfead60ac714148aabe4e3f0060480089f
   unicode-display_width (3.3.0) sha256=4b7aa66a4b11db50f6f7e98411215cd0dd10eaecb665d36eec5bcacb3fa0b613
   unicode-emoji (4.3.0) sha256=11c02fa73290378c066bb0562cd4c87d8e1b706fbbe0059ca12746a4244de8ce
+
+RUBY VERSION
+  ruby 3.4.10
 
 BUNDLED WITH
   4.0.21
