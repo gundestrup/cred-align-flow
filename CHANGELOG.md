@@ -5,6 +5,26 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.0.3] - 2026-10-11
+
+Patch release completing the opt-in update checker with a configurable
+release-age threshold and daily result caching. Update checking remains
+disabled unless `check_for_updates: true`.
+
+### Added
+
+- `update_notice_min_age_days` configuration (default `7`; `0` means
+  immediate notices). Only published, non-draft numeric releases whose
+  GitHub `published_at` is at least that old produce an update notice.
+
+### Changed
+
+- The opted-in release check caches its result — including no-update and
+  error results — for 24 hours per running UI process, keyed by the current
+  version and configured age threshold.
+
 ## [0.0.2] - 2026-10-11
 
 Patch release. The CLI remains provider-safe by default; the new UI release
@@ -77,5 +97,6 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.0.3]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.3
 [0.0.2]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.2
 [0.0.1]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.1

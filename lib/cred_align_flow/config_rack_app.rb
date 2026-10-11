@@ -69,9 +69,15 @@ module CredAlignFlow
     end
 
     def update_status
-      return { "update_version" => nil } unless @editor.update_check_enabled?
+      minimum_age_days = @editor.update_notice_min_age_days
+      return { "update_version" => nil } if minimum_age_days.nil?
 
-      { "update_version" => @release_checker.newer_version(current_version: VERSION) }
+      {
+        "update_version" => @release_checker.newer_version(
+          current_version: VERSION,
+          minimum_age_days: minimum_age_days
+        )
+      }
     end
 
     # Every payload carries the live CSRF token so a page that outlived a

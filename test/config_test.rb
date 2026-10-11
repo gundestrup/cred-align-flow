@@ -39,7 +39,7 @@ class ConfigTest < Minitest::Test
     end
   end
 
-  def test_update_check_is_disabled_by_default_and_requires_boolean
+  def test_update_notice_settings_default_and_validate
     Dir.mktmpdir do |dir|
       path = File.join(dir, "config.yml")
       source = {
@@ -48,14 +48,28 @@ class ConfigTest < Minitest::Test
         "secrets" => []
       }
       File.write(path, YAML.dump(source))
+      config = CredAlignFlow::Config.new(path)
 
-      refute_predicate CredAlignFlow::Config.new(path), :check_for_updates?
+      refute_predicate config, :check_for_updates?
+      assert_equal 7, config.update_notice_min_age_days
 
       source["check_for_updates"] = true
+      source["update_notice_min_age_days"] = 0
       File.write(path, YAML.dump(source))
+      config = CredAlignFlow::Config.new(path)
 
-      assert_equal true, CredAlignFlow::Config.new(path).check_for_updates?
+      assert_equal true, config.check_for_updates?
+      assert_equal 0, config.update_notice_min_age_days
 
+      source["update_notice_min_age_days"] = -1
+      File.write(path, YAML.dump(source))
+      assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+
+      source["update_notice_min_age_days"] = "7"
+      File.write(path, YAML.dump(source))
+      assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+
+      source["update_notice_min_age_days"] = 7
       source["check_for_updates"] = "true"
       File.write(path, YAML.dump(source))
       assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }

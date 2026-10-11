@@ -12,8 +12,8 @@ class ConfigServerTest < Minitest::Test
       @requests = []
     end
 
-    def newer_version(current_version:)
-      @requests << current_version
+    def newer_version(current_version:, minimum_age_days:)
+      @requests << [current_version, minimum_age_days]
       @version
     end
   end
@@ -82,7 +82,17 @@ class ConfigServerTest < Minitest::Test
 
       assert_equal 200, status
       assert_equal "v0.0.2", JSON.parse(body.join).fetch("update_version")
-      assert_equal [CredAlignFlow::VERSION], checker.requests
+      assert_equal [[CredAlignFlow::VERSION, 7]], checker.requests
+    end
+  end
+
+  def test_release_check_endpoint_uses_configured_minimum_age
+    with_rack_app(check_for_updates: true, update_notice_min_age_days: 3) do |app, _config_path, checker|
+      status, _headers, body = call(app, "GET", "/api/update")
+
+      assert_equal 200, status
+      assert_equal "v0.0.2", JSON.parse(body.join).fetch("update_version")
+      assert_equal [[CredAlignFlow::VERSION, 3]], checker.requests
     end
   end
 
@@ -348,7 +358,7 @@ class ConfigServerTest < Minitest::Test
     )
   end
 
-  def with_rack_app(check_for_updates: false)
+  def with_rack_app(check_for_updates: false, update_notice_min_age_days: nil)
     Dir.mktmpdir do |dir|
       config_path = File.join(dir, "config.yml")
       env_path = File.join(dir, ".env.local")
@@ -362,6 +372,7 @@ class ConfigServerTest < Minitest::Test
         "secrets" => [{ "name" => "SAMPLE_TOKEN", "value_env" => "SAMPLE_TOKEN_VALUE" }]
       }
       config["check_for_updates"] = true if check_for_updates
+      config["update_notice_min_age_days"] = update_notice_min_age_days unless update_notice_min_age_days.nil?
       File.write(config_path, YAML.dump(config))
       File.write(env_path, "SAMPLE_TOKEN_VALUE=very-secret-value-should-not-appear\n")
       editor = CredAlignFlow::ConfigEditor.new(

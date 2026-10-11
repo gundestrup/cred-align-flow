@@ -45,8 +45,9 @@ module CredAlignFlow
       )
     end
 
-    def update_check_enabled?
-      Config.new(@config_path).check_for_updates?
+    def update_notice_min_age_days
+      config = Config.new(@config_path)
+      config.check_for_updates? ? config.update_notice_min_age_days : nil
     end
 
     def data

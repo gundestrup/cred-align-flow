@@ -9,7 +9,7 @@ module CredAlignFlow
       version = @data.fetch("version", 1)
       raise ConfigError, "version must be the integer 1" unless version.is_a?(Integer) && version == 1
 
-      boolean!(@data.fetch("check_for_updates", false), "check_for_updates")
+      validate_update_check_settings!
 
       %w[state_file rules_file env_file].each do |key|
         next unless @data.key?(key)
@@ -25,6 +25,14 @@ module CredAlignFlow
       validate_github_account_auth!
       validate_secrets!
       validate_file_roles!
+    end
+
+    def validate_update_check_settings!
+      boolean!(@data.fetch("check_for_updates", false), "check_for_updates")
+      minimum_age = @data.fetch("update_notice_min_age_days", 7)
+      return if minimum_age.is_a?(Integer) && minimum_age >= 0
+
+      raise ConfigError, "update_notice_min_age_days must be a nonnegative integer"
     end
 
     def validate_ignored_env_names!

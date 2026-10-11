@@ -4,6 +4,7 @@
 # env_file paths resolve against this file's directory.
 version: 1
 check_for_updates: false
+update_notice_min_age_days: 7
 state_file: ~/.local/state/cred-align-flow/inventory.json
 # state_file: inventory.json          # keep state inside the config/ dir instead
 # rules_file: cred-align.rules.json   # UI-authored per-repository overrides;
