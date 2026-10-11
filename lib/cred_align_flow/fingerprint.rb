@@ -100,7 +100,7 @@ module CredAlignFlow
       end
 
       def digest(name, value)
-        material = key or raise ConfigError, "fingerprint key is not configured"
+        material = key || raise(ConfigError, "fingerprint key is not configured")
         "#{PREFIX}#{OpenSSL::HMAC.hexdigest('SHA256', material, "#{INPUT}\0#{name}\0#{value}")}"
       end
 
