@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>cred-align-flow config</title>
+  <style nonce="__CSP_NONCE__">
+    :root { color-scheme: light; font: 15px/1.5 system-ui, sans-serif; color: #18212b; background: #f3f5f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header, main { max-width: 1200px; margin: 0 auto; padding: 1rem 1.25rem; }
+    header { padding-top: 1.5rem; }
+    h1, h2, h3, h4, h5, p { margin-top: 0; }
+    h1 { margin-bottom: .25rem; }
+    h2 { margin-bottom: .5rem; }
+    h3 { margin-bottom: .5rem; }
+    h4 { margin-bottom: .35rem; }
+    .muted { color: #536273; }
+    .panel, .token-card, .repo-card, .source-card { background: #fff; border: 1px solid #d6dde6; border-radius: .55rem; padding: 1rem; margin: 0 0 1rem; }
+    .actions { position: sticky; top: 0; z-index: 2; display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; background: #f3f5f8; padding: .7rem 1.25rem; border-bottom: 1px solid #d6dde6; }
+    button, select, input { font: inherit; }
+    button { border: 1px solid #627286; border-radius: .35rem; padding: .48rem .8rem; background: #fff; color: #18212b; cursor: pointer; }
+    button.primary { background: #174f86; color: #fff; border-color: #174f86; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    input.filter { border: 1px solid #8997a7; border-radius: .3rem; padding: .45rem .7rem; min-width: 16rem; }
+    .notice { border-left: .3rem solid #cc8b12; background: #fff7e6; padding: .7rem .9rem; margin: .75rem 0; }
+    details.help { margin: .75rem 0; background: #fff; border: 1px solid #d6dde6; border-radius: .55rem; padding: .7rem .9rem; }
+    details.help summary { cursor: pointer; font-weight: 650; }
+    details.help dl { display: grid; grid-template-columns: minmax(11rem, 16rem) 1fr; gap: .35rem 1rem; margin: .8rem 0 0; }
+    details.help dt { font-weight: 650; }
+    details.help dd { margin: 0; color: #4d5560; }
+    .message { min-height: 1.5rem; margin: .5rem 1.25rem; font-weight: 600; }
+    .message.error { color: #9e2525; }
+    .message.success { color: #17633b; }
+    .field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .7rem; }
+    .field { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+    .field-label { font-size: .88rem; font-weight: 650; }
+    select { width: 100%; border: 1px solid #8997a7; border-radius: .3rem; background: #fff; padding: .4rem; }
+    .token-card { border-left: .35rem solid #174f86; }
+    .token-title { display: flex; justify-content: space-between; gap: .75rem; align-items: start; }
+    .token-title h3 { overflow-wrap: anywhere; }
+    .status-pill, .origin, .visibility { display: inline-block; border-radius: 999px; padding: .1rem .55rem; font-size: .82rem; font-weight: 650; }
+    .value-ready { color: #17633b; background: #e3f4ea; }
+    .value-changed { color: #7a5410; background: #fdf0d5; }
+    .value-unrecorded, .value-unverifiable { color: #4d5560; background: #e9edf2; }
+    .value-missing { color: #8b3214; background: #fff0e8; }
+    .visibility { color: #263950; background: #e8edf4; text-transform: lowercase; }
+    .legend { display: flex; flex-wrap: wrap; gap: .45rem; margin: .5rem 0 1rem; }
+    .origin-default { background: #dff2e7; color: #155a35; }
+    .origin-manual { background: #e9e1fb; color: #51318d; }
+    .origin-default-excluded { background: #fff0c9; color: #765400; }
+    .origin-manual-excluded { background: #f8dddd; color: #8a2525; }
+    .origin-source { background: #e4e9ef; color: #48596b; }
+    .source-meta { margin-bottom: .6rem; }
+    .repo-links { display: flex; flex-wrap: wrap; gap: .4rem .85rem; padding-left: 1.25rem; }
+    a { color: #155f9c; }
+    .repo-card { scroll-margin-top: 5rem; }
+    .repo-heading { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+    .repo-assignment { border-top: 1px solid #e1e6ec; padding-top: .65rem; margin-top: .65rem; }
+    .assignment-row { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(180px, 1.5fr) minmax(210px, 2fr); gap: .65rem; align-items: center; padding: .3rem 0; border-bottom: 1px solid #eef1f4; }
+    .status-ok { color: #17633b; background: #e3f4ea; }
+    .status-create, .status-update { color: #765400; background: #fff0c9; }
+    .status-remote_newer, .status-unverified_present, .status-missing_value { color: #8a2525; background: #f8dddd; }
+    .status-unexpected { color: #55377e; background: #eee6fb; }
+    .status-pull_only { color: #48596b; background: #e4e9ef; }
+    .status-not_checked, .status-not_refreshed { color: #48596b; background: #e4e9ef; }
+    .empty { color: #536273; font-style: italic; }
+    .small { font-size: .88rem; }
+    .repo-rule-list { margin: .6rem 0; }
+    .repo-rule-list summary { cursor: pointer; font-weight: 650; }
+    .lock-note { color: #8a2525; font-size: .84rem; }
+    .orphan-remove { margin-left: .4rem; padding: .1rem .5rem; font-size: .8rem; }
+    @media (max-width: 680px) {
+      header, main { padding-left: .75rem; padding-right: .75rem; }
+      .actions { padding-left: .75rem; }
+      .assignment-row { grid-template-columns: 1fr; gap: .2rem; }
+      input.filter { min-width: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>cred-align-flow configuration</h1>
+    <p id="config-file" class="muted"></p>
+    <div class="notice">
+      This page edits per-repository token rules in the rules file only. Sources, tokens, and their default rules
+      come from the YAML configuration, which is edited by hand — this page never writes it. It never displays or
+      changes values from the local env file and never writes provider secrets. Inventory refresh makes
+      read-only provider requests. Pushing values is always a CLI action (<code>apply</code>), which prints the fresh plan and requires confirmation (or <code>--yes</code> in noninteractive use).
+    </div>
+    <details class="help">
+      <summary>What the fields mean</summary>
+      <!-- Help text comes from the server's shared UiMetadata so the
+           status vocabulary and field semantics cannot drift from the
+           planner/applier that produce them. -->
+      <dl id="field-help"></dl>
+    </details>
+  </header>
+  <div class="actions">
+    <button id="refresh-inventory">Refresh repository inventory</button>
+    <button id="cancel">Cancel changes</button>
+    <button id="save" class="primary" disabled>Save</button>
+    <input id="repo-filter" class="filter" type="search" placeholder="Filter repositories…" aria-label="Filter repositories">
+  </div>
+  <div id="message" class="message" role="status" aria-live="polite"></div>
+  <main>
+    <section class="panel" aria-labelledby="defaults-heading">
+      <h2 id="defaults-heading">Token defaults <span class="muted small">(read-only — edit the YAML config)</span></h2>
+      <div class="legend">
+        <span class="origin origin-default">Assigned by token defaults</span>
+        <span class="origin origin-manual">Assigned by repository override</span>
+        <span class="origin origin-default-excluded">Not assigned by defaults</span>
+        <span class="origin origin-manual-excluded">Removed by manual rule</span>
+        <span class="origin origin-source">Repository not selected by source rules</span>
+      </div>
+      <div id="action-summary" class="muted small"></div>
+      <div id="unimported"></div>
+      <div id="tokens"></div>
+    </section>
+    <section class="panel" aria-labelledby="sources-heading">
+      <h2 id="sources-heading">Sources and repositories</h2>
+      <p id="inventory-summary" class="muted"></p>
+      <div id="orphans"></div>
+      <div id="source-index"></div>
+    </section>
+    <section aria-labelledby="repos-heading">
+      <h2 id="repos-heading">Repositories by source</h2>
+      <div id="repositories"></div>
+    </section>
+  </main>
+  <script nonce="__CSP_NONCE__">window.CRED_ALIGN_CSRF = "__CSRF_TOKEN__";</script>
+  <script nonce="__CSP_NONCE__">
+    let csrfToken = window.CRED_ALIGN_CSRF;
+    const message = document.getElementById("message");
+    let view;
+    let baseline = {};
+    let draft = {};
+    let previewValid = true;
+    let previewPending = false;
+    let previewSequence = 0;
+    let previewTimer;
+    // Every view-producing request gets a sequence number; a response may
+    // only replace the page state when it is newer than every response
+    // already applied, so out-of-order delivery can never restore an
+    // older view or discard a newer draft.
+    let issuedSequence = 0;
+    let appliedSequence = 0;
+    let saving = false;
+    let refreshing = false;
+    let lastStaleWarning = null;
+
+    function element(name, className, text) {
+      const node = document.createElement(name);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      return node;
+    }
+
+    function copy(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function setMessage(text, kind) {
+      message.textContent = text || "";
+      message.className = `message ${kind || ""}`;
+    }
+
+    function isDirty() {
+      return JSON.stringify(draft) !== JSON.stringify(baseline);
+    }
+
+    function updateButtons() {
+      document.getElementById("save").disabled = !isDirty() || !previewValid || previewPending || saving || refreshing;
+      document.getElementById("cancel").disabled = saving || refreshing;
+      document.getElementById("refresh-inventory").disabled = saving || refreshing;
+    }
+
+    function requestOptions(body) {
+      return {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Cred-Align-Token": csrfToken
+        },
+        body: JSON.stringify(body)
+      };
+    }
+
+    async function post(path, body) {
+      const response = await fetch(path, requestOptions(body));
+      const result = await response.json();
+      if (response.status === 403 && !post.retriedCsrf) {
+        post.retriedCsrf = true;
+        await refreshCsrfToken(); // picks up a fresh csrf token after a server restart
+        return post(path, body);
+      }
+      post.retriedCsrf = false;
+      if (!response.ok) {
+        const error = new Error(result.error || "Request failed");
+        error.status = response.status;
+        throw error;
+      }
+      return result;
+    }
+
+    async function refreshCsrfToken() {
+      const response = await fetch("/api/data", { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not refresh the config UI request token");
+      if (result.csrf) csrfToken = result.csrf;
+    }
+
+    async function fetchData() {
+      const sequence = ++issuedSequence;
+      const response = await fetch("/api/data", { cache: "no-store" });
+      const result = await response.json();
+      if (sequence <= appliedSequence) return null;
+      appliedSequence = sequence;
+      if (result.csrf) csrfToken = result.csrf;
+      if (!response.ok) {
+        const error = new Error(result.error || "Could not load configuration");
+        error.status = response.status;
+        throw error;
+      }
+      return result;
+    }
+
+    async function loadData() {
+      const result = await fetchData();
+      if (result) acceptView(result, { applyRules: true });
+    }
+
+    // applyRules controls whether the draft form resets to the saved
+    // rules; a save/preview response must never discard edits made while
+    // the request was in flight.
+    function acceptView(result, { applyRules }) {
+      if (result.csrf) csrfToken = result.csrf;
+      view = result;
+      if (applyRules) {
+        baseline = copy(result.rules || {});
+        draft = copy(baseline);
+        previewValid = true;
+        previewPending = false;
+      }
+      document.getElementById("config-file").textContent =
+        `Config ${result.config_file} (read-only) · rules ${result.rules_file} · inventory last refreshed ${result.generated_at || "never"}.`;
+      renderAll();
+      updateButtons();
+    }
+
+    function renderAll() {
+      renderHelp();
+      renderTokens();
+      renderUnimported();
+      renderSummary();
+      renderPreview();
+    }
+
+    function markChanged() {
+      previewValid = false;
+      previewPending = true;
+      updateButtons();
+      setMessage("Checking the draft rules against the configuration…");
+      clearTimeout(previewTimer);
+      const sequence = ++previewSequence;
+      previewTimer = setTimeout(() => previewDraft(sequence), 300);
+    }
+
+    async function previewDraft(sequence) {
+      const viewSequence = ++issuedSequence;
+      try {
+        const result = await post("/api/preview", { revision: view.revision, rules: draft });
+        if (sequence !== previewSequence) return;
+        if (result.csrf) csrfToken = result.csrf;
+        if (viewSequence > appliedSequence) {
+          appliedSequence = viewSequence;
+          acceptView(result, { applyRules: false });
+        }
+        previewValid = true;
+        setMessage("Draft rules are valid. Save writes them to the local rules file.", "success");
+      } catch (error) {
+        if (sequence !== previewSequence) return;
+        previewValid = false;
+        setMessage(error.message, "error");
+      } finally {
+        if (sequence === previewSequence) {
+          previewPending = false;
+          updateButtons();
+        }
+      }
+    }
+
+    function readOnlyField(container, labelText, value) {
+      const field = element("div", "field");
+      field.append(element("span", "field-label", labelText));
+      field.append(element("span", "", value || "—"));
+      container.append(field);
+    }
+
+    function sourceScopeText(secret) {
+      const sources = Array.isArray(secret.sources) ? secret.sources.map(String) : [];
+      return sources.length === 0 || sources.includes("all") ? "All configured sources" : sources.join(", ");
+    }
+
+    function targetContexts(secret, type) {
+      const targets = secret.targets && typeof secret.targets === "object" ? secret.targets[type] : undefined;
+      if (targets === undefined) return type === "github" ? ["actions"] : [];
+      if (Array.isArray(targets)) return targets.map(String);
+      if (targets && typeof targets === "object") return Object.keys(targets).filter((name) => targets[name] === true);
+      return [];
+    }
+
+    function targetsText(secret) {
+      const parts = Object.keys(view.provider_contexts).map((type) => {
+        const contexts = targetContexts(secret, type);
+        return contexts.length ? `${type}: ${contexts.join(", ")}` : `${type}: none`;
+      });
+      return parts.join(" · ") || "none";
+    }
+
+    function exclusionText(secret) {
+      const parts = [];
+      const sources = Array.isArray(secret.exclude_sources) ? secret.exclude_sources.map(String) : [];
+      if (sources.length) parts.push(`sources: ${sources.join(", ")}`);
+      const repos = secret.exclude_repositories || secret.exclude_repos;
+      if (Array.isArray(repos) && repos.length) parts.push(`repositories: ${repos.join(", ")}`);
+      if (repos && typeof repos === "object" && !Array.isArray(repos)) {
+        Object.entries(repos).forEach(([source, patterns]) => parts.push(`${source}: ${[].concat(patterns).join(", ")}`));
+      }
+      return parts.join(" · ");
+    }
+
+    function renderTokens() {
+      const container = document.getElementById("tokens");
+      container.replaceChildren();
+      view.secrets.forEach((entry) => {
+        const secret = entry.config || {};
+        const card = element("article", "token-card");
+        const title = element("div", "token-title");
+        title.append(element("h3", "", secret.name || "(unnamed token)"));
+        const digestStatus = entry.value_digest_status;
+        const pills = (view.meta && view.meta.value_pills) || {};
+        const pillKey = !entry.value_available ? "missing" : (pills[digestStatus] ? digestStatus : "ready");
+        const pill = pills[pillKey] || { css: "value-ready", label: "Local value is set" };
+        title.append(element("span", `status-pill ${pill.css}`, pill.label));
+        card.append(title);
+
+        const fields = element("div", "field-grid");
+        readOnlyField(fields, "Value environment variable", secret.value_env || secret.name);
+        readOnlyField(fields, "Version", secret.version || "1");
+        readOnlyField(fields, "Version time", secret.version_at || secret.updated_at || "unset");
+        readOnlyField(fields, "Visibility", secret.visibility || "public");
+        readOnlyField(fields, "Source scope", sourceScopeText(secret));
+        readOnlyField(fields, "Targets", targetsText(secret));
+        const exclusions = exclusionText(secret);
+        if (exclusions) readOnlyField(fields, "Exclusions", exclusions);
+        card.append(fields);
+        container.append(card);
+      });
+      if (view.secrets.length === 0) {
+        container.append(element("p", "empty", "No token definitions. Add secrets to the YAML config file."));
+      }
+    }
+
+    function renderUnimported() {
+      const container = document.getElementById("unimported");
+      container.replaceChildren();
+      const names = view.unimported_env_names || [];
+      const ignored = view.ignored_env_names || [];
+      if (names.length === 0 && ignored.length === 0) return;
+      const notice = element("div", "notice");
+      if (names.length) {
+        notice.append(element("strong", "", "Env-file variables without a token definition: "));
+        notice.append(document.createTextNode(names.join(", ")));
+        notice.append(document.createTextNode(". Import only after choosing exact destinations: scaffold --only NAME --target 'SOURCE|CONTEXT|OWNER/REPO'. Imports are active only for those targets; use scaffold --ignore NAME for helper variables."));
+      } else {
+        notice.append(element("strong", "", "No unimported env-file variables."));
+      }
+      if (ignored.length) notice.append(element("p", "small muted", `Ignored: ${ignored.join(", ")}`));
+      container.append(notice);
+    }
+
+    function renderSummary() {
+      const summary = view.action_summary || {};
+      const parts = Object.entries(summary).sort().map(([action, count]) => `${action}: ${count}`);
+      document.getElementById("action-summary").textContent = parts.length
+        ? `Plan actions in the current inventory: ${parts.join(" · ")}`
+        : "";
+    }
+
+    function renderPreview() {
+      document.getElementById("inventory-summary").textContent = `Inventory snapshot: ${view.generated_at || "none"}. Refreshing inventory does not write provider secrets.`;
+      renderOrphans();
+      renderSourceIndex();
+      renderRepositories();
+    }
+
+    function removeOrphan(orphan) {
+      const sourceRules = draft[orphan.source];
+      if (!sourceRules || !sourceRules[orphan.repository]) return;
+      delete sourceRules[orphan.repository][orphan.secret];
+      if (Object.keys(sourceRules[orphan.repository]).length === 0) delete sourceRules[orphan.repository];
+      if (Object.keys(sourceRules).length === 0) delete draft[orphan.source];
+      markChanged();
+    }
+
+    function renderOrphans() {
+      const container = document.getElementById("orphans");
+      container.replaceChildren();
+      const orphans = view.orphan_rules || [];
+      if (orphans.length === 0) return;
+      const notice = element("div", "notice");
+      notice.append(element("strong", "", "Rules for repositories missing from the inventory: "));
+      orphans.forEach((orphan, index) => {
+        if (index) notice.append(document.createTextNode("; "));
+        notice.append(document.createTextNode(`${orphan.repository} (${orphan.secret}: ${orphan.rule})`));
+        const button = element("button", "orphan-remove", "Remove");
+        button.addEventListener("click", () => removeOrphan(orphan));
+        notice.append(button);
+      });
+      notice.append(document.createTextNode(". Orphan rules can re-activate if the name is reused; remove them deliberately and Save."));
+      container.append(notice);
+    }
+
+    function renderSourceIndex() {
+      const container = document.getElementById("source-index");
+      container.replaceChildren();
+      view.sources.forEach((source) => {
+        const card = element("section", "source-card");
+        const heading = element("h3", "", source.id);
+        if (source.writable === false) {
+          heading.append(document.createTextNode(" "));
+          heading.append(element("span", "status-pill status-pull_only", "pull-only"));
+        }
+        card.append(heading);
+        card.append(element("p", "source-meta muted", `${source.type}${source.owner ? ` · ${source.owner}` : ""} · inventory ${source.inventory_state}${source.discovered_at ? ` · ${source.discovered_at}` : ""}`));
+        (source.stale_reasons || []).forEach((reason) => {
+          card.append(element("p", "notice", `Inventory is stale: ${reason}. Refresh the repository inventory.`));
+        });
+        if (source.contexts_not_refreshed.length) {
+          card.append(element("p", "notice", `Inventory is incomplete for: ${source.contexts_not_refreshed.join(", ")}.`));
+        }
+        const list = element("ul", "repo-links");
+        source.repositories.forEach((repo) => {
+          const item = element("li");
+          const link = element("a", "", repo.name);
+          link.href = `#${repo.anchor}`;
+          item.append(link);
+          const assignedCount = repo.assigned.length;
+          item.append(document.createTextNode(repo.selected ? ` (${assignedCount} assigned)` : " (not selected)"));
+          list.append(item);
+        });
+        if (source.repositories.length === 0) {
+          card.append(element("p", "empty", source.inventory_state === "missing" ? "No repository inventory yet. Use Refresh repository inventory." : "No repositories are present in this inventory."));
+        } else {
+          card.append(list);
+        }
+        container.append(card);
+      });
+      if (view.sources.length === 0) container.append(element("p", "empty", "No configured sources."));
+    }
+
+    // Status vocabulary comes from the server's UiMetadata, not a local
+    // copy, so new planner actions render instead of silently degrading.
+    function statusClass(action) {
+      const known = (view.meta && view.meta.statuses) || [];
+      return known.includes(action) ? `status-pill status-${action}` : "status-pill status-not_checked";
+    }
+
+    // Backtick spans become <code> elements; everything else is a text
+    // node — no innerHTML, so metadata text can never inject markup.
+    function appendMarkedText(container, text) {
+      String(text).split("`").forEach((part, index) => {
+        if (part === "") return;
+        container.append(index % 2 === 1 ? element("code", "", part) : document.createTextNode(part));
+      });
+    }
+
+    function renderHelp() {
+      const list = document.getElementById("field-help");
+      list.replaceChildren();
+      ((view.meta && view.meta.field_help) || []).forEach((entry) => {
+        list.append(element("dt", "", entry.term));
+        const dd = element("dd", "");
+        appendMarkedText(dd, entry.text);
+        list.append(dd);
+      });
+    }
+
+    function repoRuleControl(source, repo, secret) {
+      const row = element("div", "assignment-row");
+      row.append(element("strong", "", secret.name));
+      const select = document.createElement("select");
+      [
+        ["default", "Use token defaults"],
+        ["include", "Assign to this repository"],
+        ["exclude", "Do not assign to this repository"]
+      ].forEach(([value, label]) => {
+        const option = element("option", "", label);
+        option.value = value;
+        option.selected = repo.rule_modes[secret.name] === value;
+        select.append(option);
+      });
+      const locked = repo.locked_sources[secret.name] === true || repo.selected !== true;
+      select.disabled = locked;
+      select.addEventListener("change", () => changeRepositoryRule(source.id, repo, secret.name, select.value));
+      row.append(select);
+      if (repo.locked_sources[secret.name] === true) row.append(element("span", "lock-note", "Source is explicitly excluded in the YAML config."));
+      else if (repo.selected !== true) row.append(element("span", "lock-note", "Repository is not selected by the source filters."));
+      else if (repo.legacy_exclusions[secret.name] && select.value === "exclude") row.append(element("span", "small muted", "Excluded by the YAML config; choosing defaults will add a specific override."));
+      else if (select.value === "include" && repo.crosses_scope[secret.name]) row.append(element("span", "small muted", "Manual include reaches beyond default source/visibility scope or a repository exclusion."));
+      return row;
+    }
+
+    // "Use token defaults" deletes a JSON override only when there is no
+    // YAML intent underneath; against a YAML rule or exclusion it writes
+    // an explicit "default" that cancels it (see rule provenance).
+    function changeRepositoryRule(sourceId, repo, secretName, mode) {
+      const sourceRules = draft[sourceId] = draft[sourceId] || {};
+      const repoRules = sourceRules[repo.name] = sourceRules[repo.name] || {};
+      const provenance = repo.rule_sources[secretName];
+      const legacy = repo.legacy_exclusions[secretName] === true;
+      if (mode === "default" && provenance !== "yaml" && !legacy) delete repoRules[secretName];
+      else repoRules[secretName] = mode;
+      if (Object.keys(repoRules).length === 0) delete sourceRules[repo.name];
+      if (Object.keys(sourceRules).length === 0) delete draft[sourceId];
+      markChanged();
+    }
+
+    function appendAssigned(container, entry) {
+      const row = element("div", "assignment-row");
+      row.append(element("strong", "", entry.name));
+      row.append(element("span", `origin ${entry.origin === "manual" ? "origin-manual" : "origin-default"}`, entry.origin === "manual" ? "Manual assignment" : "Default assignment"));
+      const contexts = element("span", "");
+      entry.contexts.forEach((context, index) => {
+        if (index) contexts.append(document.createTextNode(" · "));
+        contexts.append(document.createTextNode(`${context.name}: `));
+        const status = element("span", statusClass(context.action), context.action.replaceAll("_", " "));
+        status.title = context.detail || "";
+        contexts.append(status);
+        const dates = [];
+        if (context.remote_updated_at) dates.push(`remote updated ${context.remote_updated_at}`);
+        if (context.applied_at) dates.push(`last applied ${context.applied_at}`);
+        if (dates.length) {
+          contexts.append(document.createTextNode(" "));
+          contexts.append(element("span", "small muted", dates.join(" · ")));
+        }
+      });
+      row.append(contexts);
+      container.append(row);
+    }
+
+    function appendNotAssigned(container, entry) {
+      const row = element("div", "assignment-row");
+      row.append(element("strong", "", entry.name));
+      const className = entry.category === "manual" ? "origin-manual-excluded" : entry.category === "source" ? "origin-source" : "origin-default-excluded";
+      const label = entry.category === "manual" ? "Manual exclusion" : entry.category === "source" ? "Source selection" : "Outside defaults";
+      row.append(element("span", `origin ${className}`, label));
+      row.append(element("span", "small", entry.reason));
+      container.append(row);
+    }
+
+    function repoMatchesFilter(repo) {
+      const filter = document.getElementById("repo-filter").value.trim().toLowerCase();
+      return filter === "" || repo.name.toLowerCase().includes(filter);
+    }
+
+    function renderRepositories() {
+      const container = document.getElementById("repositories");
+      container.replaceChildren();
+      view.sources.forEach((source) => {
+        const group = element("section", "");
+        group.append(element("h3", "", source.id));
+        if (source.repositories.length === 0) {
+          group.append(element("p", "empty", source.inventory_state === "missing" ? "No repository data. Refresh the inventory to populate this source." : "No repositories in this source snapshot."));
+          container.append(group);
+          return;
+        }
+        source.repositories.filter(repoMatchesFilter).forEach((repo) => {
+          const card = element("article", "repo-card");
+          card.id = repo.anchor;
+          const heading = element("div", "repo-heading");
+          heading.append(element("h4", "", repo.name));
+          heading.append(element("span", "visibility", repo.visibility));
+          heading.append(element("span", `origin ${repo.selected ? "origin-default" : "origin-source"}`, repo.selected ? "Selected" : "Not selected"));
+          if (!repo.admin) heading.append(element("span", "status-pill status-not_checked", "No admin permission"));
+          card.append(heading);
+
+          const rules = element("details", "repo-rule-list");
+          const summary = element("summary", "", "Repository-specific token rules");
+          rules.append(summary);
+          view.secrets.forEach((entry) => rules.append(repoRuleControl(source, repo, entry.config || {})));
+          card.append(rules);
+
+          const assigned = element("div", "repo-assignment");
+          assigned.append(element("h5", "", "Tokens assigned by current rules"));
+          if (repo.assigned.length) repo.assigned.forEach((entry) => appendAssigned(assigned, entry));
+          else assigned.append(element("p", "empty", "No tokens are currently assigned."));
+          card.append(assigned);
+
+          const omitted = element("div", "repo-assignment");
+          omitted.append(element("h5", "", "Tokens not assigned"));
+          if (repo.not_assigned.length) repo.not_assigned.forEach((entry) => appendNotAssigned(omitted, entry));
+          else omitted.append(element("p", "empty", "All configured token rules assign to this repository."));
+          card.append(omitted);
+
+          if (repo.unexpected.length) {
+            const unexpected = element("div", "repo-assignment");
+            unexpected.append(element("h5", "", "Remote tokens outside configuration"));
+            repo.unexpected.forEach((entry) => {
+              const row = element("div", "assignment-row");
+              row.append(element("strong", "", entry.name));
+              row.append(element("span", "status-pill status-unexpected", `Unexpected · ${entry.context}`));
+              row.append(element("span", "small", entry.detail));
+              unexpected.append(row);
+            });
+            card.append(unexpected);
+          }
+          group.append(card);
+        });
+        container.append(group);
+      });
+    }
+
+    async function cancelChanges() {
+      if (isDirty() && !window.confirm("Discard unsaved repository-rule changes?")) return;
+      clearTimeout(previewTimer);
+      previewSequence += 1;
+      try {
+        const result = await fetchData();
+        if (result) {
+          acceptView(result, { applyRules: true });
+          setMessage("Configuration loaded.", "success");
+        }
+      } catch (error) {
+        setMessage(error.message, "error");
+      }
+    }
+
+    async function saveChanges() {
+      if (saving) return;
+      saving = true;
+      updateButtons();
+      const viewSequence = ++issuedSequence;
+      const submitted = copy(draft);
+      try {
+        const result = await post("/api/save", { revision: view.revision, rules: submitted });
+        appliedSequence = Math.max(appliedSequence, viewSequence);
+        if (JSON.stringify(draft) === JSON.stringify(submitted)) {
+          acceptView(result, { applyRules: true });
+          setMessage("Rules saved locally. No provider secrets were changed.", "success");
+        } else {
+          // Edits made during the save are kept; only the read-only data
+          // refreshes, and a new preview validates the merged draft.
+          acceptView(result, { applyRules: false });
+          baseline = copy(result.rules || {});
+          // markChanged schedules the revalidation preview; the save outcome
+          // must be reported after it so the "checking" status does not
+          // overwrite it.
+          markChanged();
+          setMessage("Saved your earlier edits; your newer edits are kept as a draft.", "success");
+        }
+      } catch (error) {
+        setMessage(error.message, "error");
+        if (error.status === 409) {
+          previewValid = false;
+          updateButtons();
+        }
+      } finally {
+        saving = false;
+        updateButtons();
+      }
+    }
+
+    async function refreshInventory() {
+      if (refreshing) return;
+      if (isDirty() && !window.confirm("Discard unsaved repository-rule changes and refresh inventory?")) return;
+      refreshing = true;
+      updateButtons();
+      clearTimeout(previewTimer);
+      previewSequence += 1;
+      try {
+        const sequence = ++issuedSequence;
+        const result = await post("/api/inventory", { revision: view.revision });
+        if (sequence > appliedSequence) {
+          appliedSequence = sequence;
+          if (result.csrf) csrfToken = result.csrf;
+          acceptView(result, { applyRules: true });
+        }
+        setMessage("Repository and secret metadata refreshed. No provider secrets were changed.", "success");
+      } catch (error) {
+        setMessage(error.message, "error");
+      } finally {
+        refreshing = false;
+        updateButtons();
+      }
+    }
+
+    async function pollData() {
+      if (saving || refreshing) return;
+      const sequence = ++issuedSequence;
+      try {
+        const response = await fetch("/api/data", { cache: "no-store" });
+        if (!response.ok) {
+          if (sequence > appliedSequence) {
+            appliedSequence = sequence;
+            if (view) setMessage(`Server returned ${response.status}; the page is showing the last good data.`, "error");
+          }
+          return;
+        }
+        const result = await response.json();
+        if (sequence <= appliedSequence) return;
+        appliedSequence = sequence;
+        if (result.csrf) csrfToken = result.csrf;
+        if (!view) {
+          acceptView(result, { applyRules: true });
+          setMessage("Configuration loaded.", "success");
+          return;
+        }
+        if (result.display_revision === view.display_revision) return;
+        if (isDirty()) {
+          if (lastStaleWarning !== result.display_revision) {
+            lastStaleWarning = result.display_revision;
+            setMessage("The config, rules, values, or inventory changed on disk. Save or discard your edits before reloading.", "error");
+          }
+          return;
+        }
+        acceptView(result, { applyRules: true });
+      } catch (_) {
+        if (sequence > appliedSequence) {
+          appliedSequence = sequence;
+          if (view) setMessage("Could not refresh; the page is showing the last good data.", "error");
+        }
+        // Server unreachable or restarting; the next tick retries.
+      }
+    }
+
+    document.getElementById("cancel").addEventListener("click", cancelChanges);
+    document.getElementById("save").addEventListener("click", saveChanges);
+    document.getElementById("refresh-inventory").addEventListener("click", refreshInventory);
+    document.getElementById("repo-filter").addEventListener("input", renderRepositories);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) pollData(); });
+    setInterval(pollData, 5000);
+    loadData().catch((error) => setMessage(error.message, "error"));
+  </script>
+</body>
+</html>

@@ -1,0 +1,105 @@
+# Copy to an ignored location such as config/cred-align.local.yml
+# (config/ is gitignored; also works as cred-align.local.yml at the root
+# or ~/.config/cred-align-flow/config.yml). Relative state_file/rules_file/
+# env_file paths resolve against this file's directory.
+version: 1
+state_file: ~/.local/state/cred-align-flow/inventory.json
+# state_file: inventory.json          # keep state inside the config/ dir instead
+# rules_file: cred-align.rules.json   # UI-authored per-repository overrides;
+                                      # defaults to <config-stem>.rules.json
+                                      # (or rules.json when this file is config.yml)
+# env_file: secrets.env               # values file; defaults to discovery
+                                      # (.env.local, config/.env.local,
+                                      # config/secrets.env, then the XDG path)
+
+# env names that scaffold should never offer to import:
+# ignored_env_names:
+#   - LOCAL_HELPER_VAR
+
+sources:
+  github-main:
+    type: github
+    owner: your-github-owner
+    host: github.com
+    auth_env: GITHUB_SYNC_TOKEN
+    repositories:
+      visibility: public
+      include_archived: false
+      include_forks: false
+      include: []
+      exclude: []
+
+  # Pull-only Forgejo source; uncomment and localize before use.
+  # forgejo-main:
+  #   type: forgejo
+  #   owner: your-forgejo-owner
+  #   owner_type: user # or organization
+  #   url: https://forgejo.example
+  #   auth_env: FORGEJO_TOKEN
+  #   repositories:
+  #     visibility: public
+  #     include_archived: false
+  #     include_forks: false
+
+secrets:
+  - name: SONAR_TOKEN
+    value_env: SONAR_TOKEN_VALUE
+    # Optional rotation fingerprint: `cred-align-flow scaffold` records and
+    # refreshes it from the env value; `doctor` flags values that changed and
+    # `plan` schedules an update for the targets. Back up the private
+    # .digest-key file next to the env file; a missing key with saved HMACs
+    # fails closed instead of silently scheduling every target for update.
+    # value_digest: "hmac-sha256:<64 hex chars>"
+    version: "2026-10-07"
+    version_at: "2026-10-07T00:00:00Z"
+    visibility: public
+    sources:
+      - github-main
+    targets:
+      github:
+        - actions
+        - dependabot
+
+  - name: SEMGREP_APP_TOKEN
+    value_env: SEMGREP_APP_TOKEN_VALUE
+    version: "2026-10-07"
+    version_at: "2026-10-07T00:00:00Z"
+    visibility: public
+    sources:
+      - github-main
+    targets:
+      github:
+        - actions
+        - dependabot
+
+  # Pull-only Forgejo examples; uncomment after enabling forgejo-main.
+  # - name: DEPLOY_HOST
+  #   value_env: DEPLOY_HOST_VALUE
+  #   version: "2026-10-07"
+  #   version_at: "2026-10-07T00:00:00Z"
+  #   visibility: all
+  #   sources:
+  #     - forgejo-main
+  #   targets:
+  #     forgejo:
+  #       - actions
+  # - name: DEPLOY_SSH_KEY
+  #   value_env: DEPLOY_SSH_KEY_VALUE
+  #   version: "2026-10-07"
+  #   version_at: "2026-10-07T00:00:00Z"
+  #   visibility: all
+  #   sources:
+  #     - forgejo-main
+  #   targets:
+  #     forgejo:
+  #       - actions
+  # - name: DEPLOY_TARGET
+  #   value_env: DEPLOY_TARGET_VALUE
+  #   version: "2026-10-07"
+  #   version_at: "2026-10-07T00:00:00Z"
+  #   visibility: all
+  #   sources:
+  #     - forgejo-main
+  #   targets:
+  #     forgejo:
+  #       - actions

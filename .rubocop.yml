@@ -1,0 +1,85 @@
+plugins:
+  - rubocop-minitest
+  - rubocop-rake
+
+AllCops:
+  TargetRubyVersion: 3.4
+  NewCops: enable
+  SuggestExtensions: false
+  Exclude:
+    - vendor/**/*
+    - tmp/**/*
+    - coverage/**/*
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Layout/LineLength:
+  Max: 130
+
+Metrics/MethodLength:
+  Max: 30
+  Exclude:
+    - lib/cred_align_flow/cli.rb
+    - lib/cred_align_flow/planner.rb
+    - test/**/*
+
+Metrics/ClassLength:
+  Max: 250
+  Exclude:
+    - lib/cred_align_flow/cli.rb
+    - lib/cred_align_flow/config_validation.rb
+    - test/**/*
+
+Metrics/AbcSize:
+  Max: 40
+  Exclude:
+    - lib/cred_align_flow/cli.rb
+    - lib/cred_align_flow/planner.rb
+    - test/**/*
+
+Metrics/CyclomaticComplexity:
+  Max: 12
+  Exclude:
+    - lib/cred_align_flow/cli.rb
+    - lib/cred_align_flow/planner.rb
+    - test/**/*
+
+Metrics/PerceivedComplexity:
+  Max: 12
+  Exclude:
+    - lib/cred_align_flow/cli.rb
+    - lib/cred_align_flow/planner.rb
+    - test/**/*
+
+Metrics/ParameterLists:
+  Max: 7
+  Exclude:
+    # The applied journal is written through one explicit call site; the
+    # fields are its record shape.
+    - lib/cred_align_flow/state.rb
+    - test/**/*
+
+Metrics/BlockLength:
+  Exclude:
+    # OptionParser dispatch table.
+    - lib/cred_align_flow/cli.rb
+    - test/**/*
+
+Style/Documentation:
+  Enabled: false
+
+Naming/PredicateMethod:
+  Exclude:
+    - test/**/*
+
+# This suite deliberately pins multiple values per test (config/scope
+# regression checks); splitting them would obscure the fixture story.
+Minitest/MultipleAssertions:
+  Enabled: false
+
+# Config/provider contracts require literal booleans, so tests assert
+# `assert_equal true, ...` (exact) rather than `assert ...` (truthy).
+Minitest/AssertTruthy:
+  Exclude:
+    - test/**/*

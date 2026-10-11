@@ -1,0 +1,291 @@
+# frozen_string_literal: true
+
+require_relative "test_helper"
+require "stringio"
+
+class ConfigServerTest < Minitest::Test
+  def test_local_ui_uses_csrf_protection_and_never_serves_values
+    with_rack_app do |app, config_path|
+      page_status, page_headers, page_body = call(app, "GET", "/")
+      token = page_body.join.match(/window\.CRED_ALIGN_CSRF = "([a-f0-9]+)"/)&.captures&.first
+      data_status, _data_headers, data_body = call(app, "GET", "/api/data")
+      data = JSON.parse(data_body.join)
+
+      assert_equal 200, page_status
+      assert_equal "text/html; charset=utf-8", page_headers.fetch("Content-Type")
+      assert_includes page_body.join, "Cancel changes"
+      assert_equal 200, data_status
+      refute_includes data_body.join, "very-secret-value-should-not-appear"
+      refute_nil token
+
+      payload = JSON.generate(
+        "revision" => data.fetch("revision"),
+        "rules" => { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "include" } } }
+      )
+      config_before = File.read(config_path)
+      missing_token = call(app, "POST", "/api/preview", body: payload, origin: "http://127.0.0.1:8043")
+      invalid_origin = call(
+        app,
+        "POST",
+        "/api/preview",
+        body: payload,
+        origin: "http://example.com",
+        token: token
+      )
+
+      assert_equal 403, missing_token.first
+      assert_equal 403, invalid_origin.first
+
+      preview = call(app, "POST", "/api/preview", body: payload, origin: "http://127.0.0.1:8043", token: token)
+
+      assert_equal 200, preview.first
+      assert_equal config_before, File.read(config_path)
+
+      save = call(app, "POST", "/api/save", body: payload, origin: "http://127.0.0.1:8043", token: token)
+
+      assert_equal 200, save.first
+      assert_equal config_before, File.read(config_path)
+      rules_path = CredAlignFlow::Rules.default_path_for(config_path)
+
+      assert_equal "include", JSON.parse(File.read(rules_path)).dig("rules", "github-main", "example/repo", "SAMPLE_TOKEN")
+    end
+  end
+
+  def test_ui_ignores_an_older_poll_response_that_arrives_late
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_poll_sequence_guard(script) }
+      (async () => {
+        pending[0](response("initial"));
+        await new Promise((resolve) => setImmediate(resolve));
+        const olderPoll = sandbox.poll();
+        const newerPoll = sandbox.poll();
+        pending[2](response("newer"));
+        await newerPoll;
+        pending[1](response("older"));
+        await olderPoll;
+        process.stdout.write(elements.get("config-file").textContent);
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    assert_includes stdout, "Config newer.yml" if stdout
+  end
+
+  def test_ui_keeps_edits_made_while_a_save_is_in_flight
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_save_preserves_newer_draft(script) }
+      (async () => {
+        pending[0](response("initial"));
+        await new Promise((resolve) => setImmediate(resolve));
+        const repo = { name: "example/repo", rule_sources: {}, legacy_exclusions: {} };
+        sandbox.changeRepositoryRule("src", repo, "FIRST_TOKEN", "include");
+        const save = elements.get("save")._handlers.click();
+        // While the save request is in flight, the user edits again.
+        sandbox.changeRepositoryRule("src", repo, "SECOND_TOKEN", "exclude");
+        // Polling must not start another request while a save runs.
+        sandbox.poll();
+        if (pending.length !== 2) throw new Error(`poll issued a fetch during save (pending=${pending.length})`);
+        const saved = view("saved");
+        saved.rules = { src: { "example/repo": { FIRST_TOKEN: "include" } } };
+        pending[1]({ ok: true, status: 200, json: async () => saved });
+        await save;
+        if (!sandbox.isDirty()) throw new Error("in-flight edit was discarded by the save response");
+        process.stdout.write(elements.get("message").textContent);
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    assert_includes stdout, "newer edits are kept" if stdout
+  end
+
+  def test_ui_ignores_an_older_preview_response_that_arrives_late
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_preview_sequence_guard(script) }
+      (async () => {
+        pending[0](response("initial"));
+        await new Promise((resolve) => setImmediate(resolve));
+        sandbox.markChanged();
+        const older = sandbox.previewDraft(1);
+        sandbox.markChanged();
+        const newer = sandbox.previewDraft(2);
+        pending[2]({ ok: true, status: 200, json: async () => view("newer") });
+        await newer;
+        pending[1]({ ok: true, status: 200, json: async () => view("stale") });
+        await older;
+        process.stdout.write(elements.get("config-file").textContent);
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    assert_includes stdout, "Config newer.yml" if stdout
+  end
+
+  def test_ui_retries_mutations_with_a_fresh_csrf_token_after_restart
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_csrf_retry_path(script) }
+      (async () => {
+        pending[0](response("initial"));
+        await new Promise((resolve) => setImmediate(resolve));
+        const repo = { name: "example/repo", rule_sources: {}, legacy_exclusions: {} };
+        sandbox.changeRepositoryRule("src", repo, "FIRST_TOKEN", "include");
+        const save = elements.get("save")._handlers.click();
+        // The server restarted: the token embedded in the page is stale.
+        pending[1]({ ok: false, status: 403, json: async () => ({ error: "forbidden" }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        // refreshCsrfToken fetches /api/data for a new token, then retries.
+        if (pending.length < 3) throw new Error("no CSRF refresh request was issued");
+        pending[2]({ ok: true, status: 200, json: async () => ({ csrf: "fresh-token" }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        if (pending.length < 4) throw new Error("the mutation was not retried with the fresh token");
+        pending[3]({ ok: true, status: 200, json: async () => view("saved") });
+        await save;
+        process.stdout.write(elements.get("message").textContent);
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    assert_includes stdout, "Rules saved locally" if stdout
+  end
+
+  def test_rack_app_rejects_untrusted_host_and_remote_addresses
+    with_rack_app do |app, _config_path|
+      bad_host = call(app, "GET", "/api/data", host: "attacker.example:8043")
+      remote_address = call(app, "GET", "/api/data", remote_address: "192.0.2.4")
+
+      assert_equal 403, bad_host.first
+      assert_equal 403, remote_address.first
+    end
+  end
+
+  private
+
+  # Runs the page's real embedded script inside a Node `vm` sandbox with a
+  # deferred-promise fetch queue, then executes the scenario JavaScript.
+  # When Node.js is missing the shared static fallbacks still assert the
+  # ordering guards exist in the source; NODE_REQUIRED=1 (CI) turns the
+  # missing runtime into a failure instead of a static-only check.
+  def run_ui_scenario(scenario)
+    browser_script = extract_browser_script
+    harness = <<~JAVASCRIPT
+      const vm = require("vm");
+      const pending = [];
+      const elements = new Map();
+      const node = () => ({
+        textContent: "", value: "", className: "", disabled: false, style: {},
+        _handlers: {},
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        append() {}, replaceChildren() {}, setAttribute() {},
+        addEventListener(type, fn) { this._handlers[type] = fn; }
+      });
+      const document = {
+        getElementById(id) {
+          if (!elements.has(id)) elements.set(id, node());
+          return elements.get(id);
+        },
+        createElement() { return node(); },
+        createTextNode(text) { return { textContent: String(text) }; },
+        addEventListener() {},
+        hidden: false
+      };
+      const window = { confirm() { return true; } };
+      const sandbox = {
+        document,
+        window,
+        fetch() { return new Promise((resolve) => pending.push(resolve)); },
+        setInterval(callback) { sandbox.poll = callback; return 1; },
+        setTimeout() { return 1; },
+        clearTimeout() {}
+      };
+      vm.runInNewContext(#{browser_script.to_json}, sandbox);
+      const view = (name) => ({
+        csrf: "test-csrf", config_file: `${name}.yml`, rules_file: "rules.json",
+        revision: name, display_revision: name, generated_at: null, rules: {},
+        secrets: [], sources: [], orphan_rules: [], unimported_env_names: [],
+        ignored_env_names: [], action_summary: {}, provider_contexts: {},
+        meta: { statuses: ["ok", "create"], status_help: {}, value_pills: {},
+                field_help: [{ term: "T", text: "uses `code` spans" }] }
+      });
+      const response = (name) => ({ ok: true, status: 200, json: async () => view(name) });
+      #{scenario}
+    JAVASCRIPT
+    stdout, stderr, status = Open3.capture3("node", "-e", harness)
+
+    assert_predicate status, :success?, stderr
+    stdout
+  rescue Errno::ENOENT
+    raise "Node.js is required for the UI async-ordering tests (NODE_REQUIRED=1)" if ENV["NODE_REQUIRED"] == "1"
+
+    yield browser_script
+    nil
+  end
+
+  def extract_browser_script
+    html = File.read(File.expand_path("../lib/cred_align_flow/config_ui.html", __dir__), encoding: "UTF-8")
+    html.scan(%r{<script nonce="__CSP_NONCE__">(.*?)</script>}m).flatten.join("\n").gsub("__CSRF_TOKEN__", "test-csrf")
+  end
+
+  def assert_poll_sequence_guard(script)
+    poll = script[/async function pollData\(\) \{.*?\n    \}/m]
+
+    assert(poll)
+    assert_operator poll.index("const sequence = ++issuedSequence"), :<, poll.index("await fetch")
+  end
+
+  def assert_save_preserves_newer_draft(script)
+    save = script[/async function saveChanges\(\) \{.*?\n    \}/m]
+
+    assert(save)
+    assert_includes save, "copy(draft)"
+    assert_includes save, "applyRules: false"
+    assert_match(/JSON\.stringify\(draft\)\s*={2,3}\s*JSON\.stringify\(submitted\)/, save)
+  end
+
+  def assert_preview_sequence_guard(script)
+    preview = script[/async function previewDraft\(sequence\) \{.*?\n    \}/m]
+
+    assert(preview)
+    assert_includes preview, "sequence !== previewSequence"
+  end
+
+  def assert_csrf_retry_path(script)
+    post = script[/async function post\(path, body\) \{.*?\n    \}/m]
+
+    assert(post)
+    assert_match(/status === 403/, post)
+    assert_includes post, "refreshCsrfToken"
+    assert_includes post, "return post(path, body)"
+  end
+
+  def call(app, method, path, body: nil, origin: nil, token: nil, host: "127.0.0.1:8043", remote_address: "127.0.0.1")
+    app.call(
+      "REQUEST_METHOD" => method,
+      "PATH_INFO" => path,
+      "QUERY_STRING" => "",
+      "SERVER_NAME" => "127.0.0.1",
+      "SERVER_PORT" => "8043",
+      "REMOTE_ADDR" => remote_address,
+      "HTTP_HOST" => host,
+      "HTTP_ORIGIN" => origin,
+      "HTTP_X_CRED_ALIGN_TOKEN" => token,
+      "CONTENT_TYPE" => body ? "application/json" : "",
+      "CONTENT_LENGTH" => body ? body.bytesize.to_s : "0",
+      "rack.input" => StringIO.new(body.to_s)
+    )
+  end
+
+  def with_rack_app
+    Dir.mktmpdir do |dir|
+      config_path = File.join(dir, "config.yml")
+      env_path = File.join(dir, ".env.local")
+      state_path = File.join(dir, "inventory.json")
+      config = {
+        "version" => 1,
+        "state_file" => state_path,
+        "sources" => {
+          "github-main" => { "type" => "github", "owner" => "example" }
+        },
+        "secrets" => [{ "name" => "SAMPLE_TOKEN", "value_env" => "SAMPLE_TOKEN_VALUE" }]
+      }
+      File.write(config_path, YAML.dump(config))
+      File.write(env_path, "SAMPLE_TOKEN_VALUE=very-secret-value-should-not-appear\n")
+      editor = CredAlignFlow::ConfigEditor.new(
+        config_path: config_path,
+        env_path: env_path,
+        state_path: state_path
+      )
+      yield CredAlignFlow::ConfigRackApp.new(editor: editor, port: 8043), config_path
+    end
+  end
+end

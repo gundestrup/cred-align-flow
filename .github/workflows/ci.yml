@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Ruby ${{ matrix.ruby }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby:
+          - "3.4.10" # declared floor (Gemfile ruby >= 3.4.10)
+          - "3.4.11" # latest 3.4 patch release
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+
+      - name: Install Semgrep CE
+        run: pipx install semgrep==1.179.0
+
+      - name: Run checks (tests, rubocop, bundler-audit, flay report, semgrep)
+        env:
+          SEMGREP_REQUIRED: "1"
+          # Runner images include Node.js; fail instead of falling back to
+          # the static-only UI ordering assertions when it is missing.
+          NODE_REQUIRED: "1"
+        run: bundle exec rake check
+
+      # Tokenless upload works for public repos; a private repo needs a
+      # CODECOV_TOKEN repository secret. Non-blocking during alpha.
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
+        with:
+          files: coverage/.resultset.json
+          fail_ci_if_error: false
+
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+        with:
+          ruby-version: "3.4.10"
+          bundler-cache: true
+
+      - name: Generate coverage and lint reports
+        run: |
+          bundle exec rake test
+          bundle exec rubocop --format json --out coverage/rubocop.json
+
+      # Self-skips until SONAR_TOKEN is added to the repository secrets.
+      - name: SonarCloud scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0

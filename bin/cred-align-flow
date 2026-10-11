@@ -1,0 +1,25 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Coverage instrumentation for subprocess runs in the test suite; the
+# parent suite sets CRED_ALIGN_FLOW_SIMPLECOV=1 and merges the result sets.
+if ENV["CRED_ALIGN_FLOW_SIMPLECOV"] == "1"
+  begin
+    require "simplecov"
+    SimpleCov.start do
+      root File.expand_path("..", __dir__)
+      command_name "cli-subprocess-#{Process.pid}"
+      enable_coverage :branch
+      skip "/test/"
+      formatter Class.new { def format(_result); end }.new
+    end
+  rescue LoadError
+    # Coverage is a development-only dependency; never block the CLI on it.
+  end
+end
+
+$LOAD_PATH.unshift(File.expand_path("../lib", __dir__))
+
+require "cred_align_flow"
+
+exit CredAlignFlow::CLI.new.run(ARGV)
