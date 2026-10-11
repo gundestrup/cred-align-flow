@@ -23,6 +23,7 @@ module CredAlignFlow
         "revision" => @revision,
         "display_revision" => @display_revision,
         "generated_at" => @state.data["generated_at"],
+        "check_for_updates" => @config.check_for_updates?,
         "provider_contexts" => provider_contexts,
         "secrets" => secret_entries,
         "sources" => source_entries,

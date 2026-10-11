@@ -39,6 +39,15 @@ class CliTest < Minitest::Test
     end
   end
 
+  def test_global_flags_ignore_option_values
+    with_workspace do |workspace|
+      stdout, stderr, status = invoke(workspace, "--config", "plan", "--version")
+
+      assert_predicate status, :success?, stderr
+      assert_equal "#{CredAlignFlow::VERSION}\n", stdout
+    end
+  end
+
   def test_help_rejects_trailing_positional_arguments
     with_workspace do |workspace|
       _stdout, stderr, status = invoke(workspace, "help", "unexpected")

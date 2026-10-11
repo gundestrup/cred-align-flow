@@ -18,7 +18,7 @@ module CredAlignFlow
       File.join("config", ".env.local"),
       File.join("config", "secrets.env")
     ].freeze
-    TOP_LEVEL_KEYS = %w[version state_file rules_file env_file ignored_env_names sources secrets].freeze
+    TOP_LEVEL_KEYS = %w[version state_file rules_file env_file check_for_updates ignored_env_names sources secrets].freeze
     SOURCE_KEYS = %w[type owner owner_type host api_url url auth_env repositories].freeze
     REPOSITORY_KEYS = %w[visibility include_archived include_forks include exclude].freeze
     SECRET_KEYS = %w[
@@ -104,6 +104,10 @@ module CredAlignFlow
 
     def ignored_env_names
       @data.fetch("ignored_env_names", [])
+    end
+
+    def check_for_updates?
+      @data.fetch("check_for_updates", false)
     end
 
     # Stable identity for a configured source — type + endpoint + owner —

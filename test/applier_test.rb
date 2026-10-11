@@ -415,6 +415,19 @@ class ApplierTest < Minitest::Test
     end
   end
 
+  def test_remote_timestamp_comparison_uses_fail_closed_provider_baseline
+    applier = CredAlignFlow::Applier.allocate
+    remote = { "updated_at" => "2026-01-05T00:00:00Z" }
+    malformed_provider_baseline = {
+      "applied_remote_at" => "not-a-time",
+      "applied_at" => "2026-01-10T00:00:00Z"
+    }
+    legacy_record = { "applied_at" => "2026-01-10T00:00:00Z" }
+
+    assert_equal true, applier.send(:remote_changed_since_apply?, remote, malformed_provider_baseline)
+    refute applier.send(:remote_changed_since_apply?, remote, legacy_record)
+  end
+
   def test_create_is_skipped_when_remote_appears_after_the_plan
     Dir.mktmpdir do |dir|
       config_path = File.join(dir, "config.yml")

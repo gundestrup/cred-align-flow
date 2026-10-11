@@ -4,6 +4,7 @@ require "ipaddr"
 require "json"
 require "securerandom"
 require "socket"
+require_relative "release_checker"
 
 module CredAlignFlow
   class ConfigRackApp
@@ -18,9 +19,10 @@ module CredAlignFlow
       end
     end
 
-    def initialize(editor:, port:)
+    def initialize(editor:, port:, release_checker: ReleaseChecker.new)
       @editor = editor
       @port = Integer(port)
+      @release_checker = release_checker
       @csrf_token = SecureRandom.hex(32)
     end
 
@@ -50,6 +52,8 @@ module CredAlignFlow
         html_response
       when ["GET", "/api/data"]
         json_response(with_csrf(@editor.data))
+      when ["GET", "/api/update"]
+        json_response(update_status)
       when ["POST", "/api/preview"]
         authorize_mutation!(env)
         json_response(with_csrf(@editor.preview(json_body(env))))
@@ -62,6 +66,12 @@ module CredAlignFlow
       else
         json_response({ "error" => "not found" }, status: 404)
       end
+    end
+
+    def update_status
+      return { "update_version" => nil } unless @editor.update_check_enabled?
+
+      { "update_version" => @release_checker.newer_version(current_version: VERSION) }
     end
 
     # Every payload carries the live CSRF token so a page that outlived a

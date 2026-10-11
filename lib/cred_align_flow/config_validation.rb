@@ -9,6 +9,8 @@ module CredAlignFlow
       version = @data.fetch("version", 1)
       raise ConfigError, "version must be the integer 1" unless version.is_a?(Integer) && version == 1
 
+      boolean!(@data.fetch("check_for_updates", false), "check_for_updates")
+
       %w[state_file rules_file env_file].each do |key|
         next unless @data.key?(key)
 
@@ -282,7 +284,7 @@ module CredAlignFlow
         end
 
         repositories.each do |name, rule|
-          unless %w[default include exclude].include?(rule)
+          unless Rules::ACTIONS.include?(rule)
             raise ConfigError, "#{context} repository rule for #{name.inspect} must be default, include, or exclude"
           end
         end

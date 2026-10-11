@@ -45,6 +45,10 @@ module CredAlignFlow
       )
     end
 
+    def update_check_enabled?
+      Config.new(@config_path).check_for_updates?
+    end
+
     def data
       inputs = read_inputs
       config = build_config(inputs.config_bytes)

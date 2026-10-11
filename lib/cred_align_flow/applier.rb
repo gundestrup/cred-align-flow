@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "time"
+require_relative "timestamp"
 
 module CredAlignFlow
   # Executes a reviewed plan item set. Every item is preflighted (secret
@@ -67,7 +68,7 @@ module CredAlignFlow
     def confirmed_remote_timestamp(entry)
       item = entry[:item]
       remote = remote_secret_entries(entry).find { |secret| secret["name"] == item.secret }
-      timestamp(remote && (remote["updated_at"] || remote["updatedAt"]))
+      Timestamp.parse(remote && (remote["updated_at"] || remote["updatedAt"]))
     rescue ProviderError
       nil
     end
@@ -180,7 +181,10 @@ module CredAlignFlow
     # Returns a ready entry, or an Outcome describing why the item is
     # blocked. All checks run before the first remote write.
     def prepare_item(item, force)
-      return outcome(item, "skipped", "#{item.action} requires --force or is not actionable") unless apply_item?(item, force)
+      unless item.actionable?(force: force)
+        return outcome(item, "skipped",
+                       "#{item.action} requires --force or is not actionable")
+      end
 
       provider = provider_for(item.source)
       return outcome(item, "skipped", "#{item.source} is pull-only; remote writes are disabled") unless provider.writable?
@@ -213,17 +217,14 @@ module CredAlignFlow
     def remote_changed_since_apply?(remote, applied_record)
       return true unless applied_record.is_a?(Hash)
 
-      remote_time = timestamp(remote["updatedAt"] || remote["updated_at"])
-      applied_time = timestamp(applied_record["applied_remote_at"]) || timestamp(applied_record["applied_at"])
+      remote_time = Timestamp.parse(remote["updatedAt"] || remote["updated_at"])
+      provider_time = applied_record["applied_remote_at"]
+      applied_time = if provider_time.to_s.empty?
+                       Timestamp.parse(applied_record["applied_at"])
+                     else
+                       Timestamp.parse(provider_time)
+                     end
       remote_time.nil? || applied_time.nil? || remote_time > applied_time
-    end
-
-    def timestamp(value)
-      return nil if value.to_s.empty?
-
-      Time.iso8601(value.to_s).utc
-    rescue ArgumentError
-      nil
     end
 
     def secret_count_limit(provider)
@@ -236,17 +237,6 @@ module CredAlignFlow
 
     def provider_limit(provider)
       provider.class.const_defined?(:MAX_SECRET_VALUE_BYTES) ? provider.class::MAX_SECRET_VALUE_BYTES : nil
-    end
-
-    def apply_item?(item, force)
-      case item.action
-      when "create", "update"
-        true
-      when "unverified_present", "remote_newer"
-        force
-      else
-        false
-      end
     end
 
     def outcome(item, status, detail)

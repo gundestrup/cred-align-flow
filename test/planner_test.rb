@@ -415,6 +415,22 @@ class PlannerTest < Minitest::Test
     end
   end
 
+  def test_plan_item_actionability_matches_the_force_policy
+    actions = %w[create update unverified_present remote_newer ok missing_value pull_only unexpected unknown]
+    expected = {
+      false => %w[create update],
+      true => %w[create update unverified_present remote_newer]
+    }
+
+    expected.each do |force, actionable|
+      selected = actions.select do |action|
+        CredAlignFlow::Planner::Item.new(action: action).actionable?(force: force)
+      end
+
+      assert_equal actionable, selected
+    end
+  end
+
   def test_every_planner_action_is_listed_in_ui_metadata
     Dir.mktmpdir do |dir|
       # Exercise a mix of outcomes: ok would need an applied record, but

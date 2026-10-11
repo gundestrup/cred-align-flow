@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "rake/testtask"
+require_relative "lib/cred_align_flow/release_version"
 
 Rake::TestTask.new(:test) do |task|
   task.libs << "lib" << "test"
@@ -54,7 +55,28 @@ task :semgrep do
   end
 end
 
+namespace :version do
+  desc "Bump the canonical app version (bundle exec rake 'version:bump[patch|minor|major]')"
+  task :bump, [:part] do |_task, args|
+    part = args[:part].to_s
+    abort "usage: bundle exec rake 'version:bump[patch|minor|major]'" unless %w[patch minor major].include?(part)
+
+    path = File.join(__dir__, "lib", "cred_align_flow", "version.rb")
+    version = CredAlignFlow::ReleaseVersion.bump_file!(path, part)
+    puts "Version is now #{version}; update CHANGELOG.md before running the release gate."
+  end
+
+  desc "Verify the app version matches a dated changelog entry and release link"
+  task :check do
+    version = CredAlignFlow::ReleaseVersion.check_consistency(
+      version_path: File.join(__dir__, "lib", "cred_align_flow", "version.rb"),
+      changelog_path: File.join(__dir__, "CHANGELOG.md")
+    )
+    puts "Version #{version} matches CHANGELOG.md."
+  end
+end
+
 desc "Run all checks"
-task check: %i[test rubocop audit flay flog semgrep]
+task check: ["version:check", :test, :rubocop, :audit, :flay, :flog, :semgrep]
 
 task default: :check

@@ -39,6 +39,29 @@ class ConfigTest < Minitest::Test
     end
   end
 
+  def test_update_check_is_disabled_by_default_and_requires_boolean
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      source = {
+        "version" => 1,
+        "sources" => { "github-main" => { "type" => "github", "owner" => "example" } },
+        "secrets" => []
+      }
+      File.write(path, YAML.dump(source))
+
+      refute_predicate CredAlignFlow::Config.new(path), :check_for_updates?
+
+      source["check_for_updates"] = true
+      File.write(path, YAML.dump(source))
+
+      assert_equal true, CredAlignFlow::Config.new(path).check_for_updates?
+
+      source["check_for_updates"] = "true"
+      File.write(path, YAML.dump(source))
+      assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+    end
+  end
+
   def test_secret_visibility_defaults_to_public
     Dir.mktmpdir do |dir|
       path = File.join(dir, "config.yml")

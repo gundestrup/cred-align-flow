@@ -20,7 +20,7 @@ module CredAlignFlow
       refreshed_source_ids = []
 
       @config.source_ids.each do |source_id|
-        next if source_filter && !File.fnmatch?(source_filter, source_id, File::FNM_EXTGLOB)
+        next unless Selector.matches_filter?(source_filter, source_id)
 
         collect_source(source_id, context_filter: context_filter)
         refreshed_source_ids << source_id
@@ -38,7 +38,7 @@ module CredAlignFlow
       repositories_config = @config.repositories_config(source_id)
       include_names = expand_include_names(repositories_config["include"], source_id)
       contexts = @config.contexts_for_source(source_id)
-      refreshed = context_filter ? contexts.select { |c| File.fnmatch?(context_filter, c, File::FNM_EXTGLOB) } : contexts
+      refreshed = context_filter ? contexts.select { |context| Selector.matches_filter?(context_filter, context) } : contexts
 
       # Build the replacement repository map entirely from provider data
       # before touching the state lock.

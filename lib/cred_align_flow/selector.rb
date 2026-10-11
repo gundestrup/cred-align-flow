@@ -10,6 +10,10 @@ module CredAlignFlow
       Array(repositories_config["include"]).empty?
     end
 
+    def matches_filter?(pattern, value)
+      pattern.nil? || File.fnmatch?(pattern, value, File::FNM_EXTGLOB)
+    end
+
     def repository_selected?(repo, config)
       return false if matches_any?(Array(config["exclude"]), repo)
 
@@ -43,7 +47,7 @@ module CredAlignFlow
     def matches_any?(patterns, repo)
       names = [repo["name"], repo["nameWithOwner"], repo["name_with_owner"]].compact
       Array(patterns).any? do |pattern|
-        names.any? { |name| File.fnmatch?(pattern.to_s, name.to_s, File::FNM_EXTGLOB) }
+        names.any? { |name| matches_filter?(pattern.to_s, name.to_s) }
       end
     end
   end

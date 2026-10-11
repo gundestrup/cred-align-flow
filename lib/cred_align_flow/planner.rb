@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "time"
+require_relative "timestamp"
 
 module CredAlignFlow
   # Compares desired local material with the applied journal and observed
@@ -14,7 +15,18 @@ module CredAlignFlow
   # unchanged, because the desired fingerprint no longer matches the
   # fingerprint recorded at the last successful apply.
   class Planner
-    Item = Struct.new(:action, :source, :repository, :context, :secret, :detail, keyword_init: true)
+    Item = Struct.new(:action, :source, :repository, :context, :secret, :detail, keyword_init: true) do
+      def actionable?(force: false)
+        case action
+        when "create", "update"
+          true
+        when "unverified_present", "remote_newer"
+          force
+        else
+          false
+        end
+      end
+    end
 
     attr_reader :items
 
@@ -36,7 +48,7 @@ module CredAlignFlow
       @items = []
 
       @config.source_ids.each do |source_id|
-        next if @source_filter && !File.fnmatch?(@source_filter, source_id, File::FNM_EXTGLOB)
+        next unless Selector.matches_filter?(@source_filter, source_id)
 
         each_repository(source_id) do |repo_name, repo|
           @config.secrets.each do |secret|
@@ -53,7 +65,7 @@ module CredAlignFlow
 
             value_available = !@config.value_for(secret, @env_values).nil?
             @config.contexts_for(secret, source_id).each do |context|
-              next if @context_filter && !File.fnmatch?(@context_filter, context, File::FNM_EXTGLOB)
+              next unless Selector.matches_filter?(@context_filter, context)
 
               expected_names[[source_id, repo_name, context]] << secret.fetch("name")
               @items << item_for(source_id, repo_name, repo, context, secret, value_available)
@@ -69,16 +81,7 @@ module CredAlignFlow
     end
 
     def actionable_items(force: false)
-      plan.select do |item|
-        case item.action
-        when "create", "update"
-          true
-        when "unverified_present", "remote_newer"
-          force
-        else
-          false
-        end
-      end
+      plan.select { |item| item.actionable?(force: force) }
     end
 
     def blocking_items(strict: false)
@@ -100,7 +103,7 @@ module CredAlignFlow
     end
 
     def secret_selected?(secret)
-      @secret_filter.nil? || File.fnmatch?(@secret_filter, secret.fetch("name"), File::FNM_EXTGLOB)
+      Selector.matches_filter?(@secret_filter, secret.fetch("name"))
     end
 
     def item_for(source_id, repo_name, repo, context, secret, value_available)
@@ -127,7 +130,7 @@ module CredAlignFlow
                     "applied record belongs to a different repository or source identity; adopt with --force")
       end
 
-      remote_time = timestamp(remote["updated_at"])
+      remote_time = Timestamp.parse(remote["updated_at"])
       if remote_time.nil?
         detail = remote["updated_at"].to_s.empty? ? "remote updated_at is missing" : "remote updated_at is invalid"
         return item(source_id, repo_name, context, name, "remote_newer", detail)
@@ -153,12 +156,12 @@ module CredAlignFlow
     def applied_baseline(managed)
       remote_stamp = managed["applied_remote_at"].to_s
       unless remote_stamp.empty?
-        confirmed = timestamp(remote_stamp)
+        confirmed = Timestamp.parse(remote_stamp)
         return [nil, nil] unless confirmed
 
         return [confirmed, "the provider-confirmed apply"]
       end
-      [timestamp(managed["applied_at"]), "the last recorded apply"]
+      [Timestamp.parse(managed["applied_at"]), "the last recorded apply"]
     end
 
     # The applied fingerprint is authoritative when present: it is the
@@ -220,15 +223,6 @@ module CredAlignFlow
           end
         end
       end
-    end
-
-    def timestamp(value)
-      return value.utc if value.is_a?(Time)
-      return nil if value.to_s.empty?
-
-      Time.parse(value).utc
-    rescue ArgumentError
-      nil
     end
 
     def item(source_id, repo_name, context, secret, action, detail)

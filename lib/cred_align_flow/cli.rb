@@ -41,44 +41,9 @@ module CredAlignFlow
       when "inventory", "pull"
         refresh_inventory(config, state, env_values, source_filter: options[:source])
       when "plan", "diff", "check"
-        load_inventory(config, state, env_values, options)
-        planner = build_planner(config, state, env_values, options)
-        print_items(planner.plan)
-        validate_repo_filter!(options, config, state)
-        if command == "check"
-          blocking = planner.blocking_items(strict: options[:strict])
-          return blocking.empty? ? 0 : 1
-        end
+        return run_plan_command(command, config, state, env_values, options)
       when "apply"
-        refresh_inventory(config, state, env_values, source_filter: options[:source],
-                                                     context_filter: options[:context])
-        state = State.new(state.path)
-        ensure_inventory!(config, state, source_filter: options[:source], context_filter: options[:context])
-        verify_loaded_inputs!(config, @env_path)
-        plan_revision = input_revision(config, @env_path, state.path)
-        planner = build_planner(config, state, env_values, options)
-        plan = planner.plan
-        print_items(plan)
-        validate_repo_filter!(options, config, state)
-        if options[:dry_run]
-          puts
-          puts "Dry run: no remote secrets were changed."
-          return 0
-        end
-
-        actionable = planner.actionable_items(force: options[:force])
-        blockers = apply_blockers(plan, options[:force])
-        return report_outcomes([], blockers: blockers) if actionable.empty?
-
-        approval = apply_approval(options, actionable.length)
-        unless approval == :approved
-          puts "Cancelled; no remote secrets were changed." if approval == :declined
-          return approval == :declined && blockers.empty? ? 0 : 1
-        end
-
-        verify_plan_inputs!(config, @env_path, state.path, plan_revision)
-        outcomes = Applier.new(config, state, env_values).apply(actionable, force: options[:force])
-        return report_outcomes(outcomes, blockers: blockers)
+        return run_apply(config, state, env_values, options)
       end
 
       0
@@ -104,15 +69,55 @@ module CredAlignFlow
 
     private
 
+    def run_plan_command(command, config, state, env_values, options)
+      load_inventory(config, state, env_values, options)
+      planner = build_planner(config, state, env_values, options)
+      print_items(planner.plan)
+      validate_repo_filter!(options, config, state)
+      return 0 unless command == "check"
+
+      planner.blocking_items(strict: options[:strict]).empty? ? 0 : 1
+    end
+
+    def run_apply(config, state, env_values, options)
+      refresh_inventory(config, state, env_values, source_filter: options[:source],
+                                                   context_filter: options[:context])
+      state = State.new(state.path)
+      ensure_inventory!(config, state, source_filter: options[:source], context_filter: options[:context])
+      verify_loaded_inputs!(config, @env_path)
+      plan_revision = input_revision(config, @env_path, state.path)
+      planner = build_planner(config, state, env_values, options)
+      plan = planner.plan
+      print_items(plan)
+      validate_repo_filter!(options, config, state)
+      if options[:dry_run]
+        puts
+        puts "Dry run: no remote secrets were changed."
+        return 0
+      end
+
+      actionable = planner.actionable_items(force: options[:force])
+      blockers = apply_blockers(plan, options[:force])
+      return report_outcomes([], blockers: blockers) if actionable.empty?
+
+      approval = apply_approval(options, actionable.length)
+      unless approval == :approved
+        puts "Cancelled; no remote secrets were changed." if approval == :declined
+        return approval == :declined && blockers.empty? ? 0 : 1
+      end
+
+      verify_plan_inputs!(config, @env_path, state.path, plan_revision)
+      outcomes = Applier.new(config, state, env_values).apply(actionable, force: options[:force])
+      report_outcomes(outcomes, blockers: blockers)
+    end
+
     def contains_global_flag?(argv, flags)
       index = 0
       while index < argv.length
         argument = argv[index]
         return true if flags.include?(argument)
 
-        option = argument.split("=", 2).first
-        arity = VALUE_OPTION_ARITY[option]
-        index += arity && !argument.include?("=") ? arity + 1 : 1
+        index = next_argument_index(argv, index)
       end
       false
     end
@@ -128,9 +133,7 @@ module CredAlignFlow
           next
         end
 
-        option = argument.split("=", 2).first
-        arity = VALUE_OPTION_ARITY[option]
-        index += arity && !argument.include?("=") ? arity + 1 : 1
+        index = next_argument_index(argv, index)
       end
       nil
     end
@@ -147,9 +150,16 @@ module CredAlignFlow
         arity = VALUE_OPTION_ARITY[option]
         return false unless arity || FLAG_OPTIONS.include?(option)
 
-        index += arity && !argument.include?("=") ? arity + 1 : 1
+        index = next_argument_index(argv, index)
       end
       true
+    end
+
+    def next_argument_index(argv, index)
+      argument = argv[index]
+      option = argument.split("=", 2).first
+      arity = VALUE_OPTION_ARITY[option]
+      index + (arity && !argument.include?("=") ? arity + 1 : 1)
     end
 
     def parse_options(command, argv)
@@ -172,41 +182,9 @@ module CredAlignFlow
       }
       parser = OptionParser.new do |opts|
         opts.banner = "Usage: cred-align-flow #{command} [options]"
-        opts.on("--config PATH", "Configuration file") { |value| options[:config] = value }
-        opts.on("--env-file PATH", "Local environment/value file") { |value| options[:env_file] = value }
-        opts.on("--state PATH", "Inventory state file") { |value| options[:state] = value }
-        opts.on("--port PORT", Integer, "Local config UI port") { |value| options[:port] = value } if command == "ui"
-
-        if %w[inventory pull plan diff check apply].include?(command)
-          opts.on("--source PATTERN", "Limit to matching source names") { |value| options[:source] = value }
-        end
-        if %w[plan diff check apply].include?(command)
-          opts.on("--repo PATTERN", "Limit to matching repository names") { |value| options[:repo] = value }
-          opts.on("--secret PATTERN", "Limit to matching secret names") { |value| options[:secret] = value }
-          opts.on("--context PATTERN", "Limit to matching provider contexts") { |value| options[:context] = value }
-        end
-        opts.on("--offline", "Use cached inventory") { options[:offline] = true } if %w[plan diff check].include?(command)
-        opts.on("--strict", "Treat unexpected remote secrets as failures") { options[:strict] = true } if command == "check"
-        opts.on("--verify", "Also probe provider authentication/connectivity") { options[:verify] = true } if command == "doctor"
-        if command == "apply"
-          opts.on("--dry-run", "Refresh and report without writing remote secrets") { options[:dry_run] = true }
-          opts.on("--force", "Overwrite unverified or remotely newer secrets") { options[:force] = true }
-          opts.on("--yes", "Approve the exact plan printed by this invocation") { options[:yes] = true }
-        end
-        if command == "scaffold"
-          opts.on("--only NAMES", "Import only these comma-separated env names") { |value| options[:only] = value.split(",") }
-          opts.on("--target TARGET", "Exact SOURCE|CONTEXT|OWNER/REPO destination; repeat for every tuple") do |value|
-            target = value.split("|", -1)
-            validate_target_option!(target)
-            options[:targets] << target
-          end
-          opts.on("--ignore NAMES", "Add env names to ignored_env_names and skip them") do |value|
-            options[:ignore] = value.split(",")
-          end
-          opts.on("--digests-only", "Refresh value digests without importing new names") do
-            options[:digests_only] = true
-          end
-        end
+        register_path_options(opts, options, command)
+        register_filter_options(opts, options, command)
+        register_command_options(opts, options, command)
       end
       parser.parse!(argv)
       raise OptionParser::ParseError, "unexpected arguments: #{argv.join(' ')}" unless argv.empty?
@@ -215,6 +193,53 @@ module CredAlignFlow
       end
 
       options
+    end
+
+    def register_path_options(opts, options, command)
+      opts.on("--config PATH", "Configuration file") { |value| options[:config] = value }
+      opts.on("--env-file PATH", "Local environment/value file") { |value| options[:env_file] = value }
+      opts.on("--state PATH", "Inventory state file") { |value| options[:state] = value }
+      opts.on("--port PORT", Integer, "Local config UI port") { |value| options[:port] = value } if command == "ui"
+    end
+
+    def register_filter_options(opts, options, command)
+      if %w[inventory pull plan diff check apply].include?(command)
+        opts.on("--source PATTERN", "Limit to matching source names") { |value| options[:source] = value }
+      end
+      return unless %w[plan diff check apply].include?(command)
+
+      opts.on("--repo PATTERN", "Limit to matching repository names") { |value| options[:repo] = value }
+      opts.on("--secret PATTERN", "Limit to matching secret names") { |value| options[:secret] = value }
+      opts.on("--context PATTERN", "Limit to matching provider contexts") { |value| options[:context] = value }
+    end
+
+    def register_command_options(opts, options, command)
+      opts.on("--offline", "Use cached inventory") { options[:offline] = true } if %w[plan diff check].include?(command)
+      opts.on("--strict", "Treat unexpected remote secrets as failures") { options[:strict] = true } if command == "check"
+      opts.on("--verify", "Also probe provider authentication/connectivity") { options[:verify] = true } if command == "doctor"
+      register_apply_options(opts, options) if command == "apply"
+      register_scaffold_options(opts, options) if command == "scaffold"
+    end
+
+    def register_apply_options(opts, options)
+      opts.on("--dry-run", "Refresh and report without writing remote secrets") { options[:dry_run] = true }
+      opts.on("--force", "Overwrite unverified or remotely newer secrets") { options[:force] = true }
+      opts.on("--yes", "Approve the exact plan printed by this invocation") { options[:yes] = true }
+    end
+
+    def register_scaffold_options(opts, options)
+      opts.on("--only NAMES", "Import only these comma-separated env names") { |value| options[:only] = value.split(",") }
+      opts.on("--target TARGET", "Exact SOURCE|CONTEXT|OWNER/REPO destination; repeat for every tuple") do |value|
+        target = value.split("|", -1)
+        validate_target_option!(target)
+        options[:targets] << target
+      end
+      opts.on("--ignore NAMES", "Add env names to ignored_env_names and skip them") do |value|
+        options[:ignore] = value.split(",")
+      end
+      opts.on("--digests-only", "Refresh value digests without importing new names") do
+        options[:digests_only] = true
+      end
     end
 
     def validate_target_option!(target)
@@ -272,26 +297,24 @@ module CredAlignFlow
     # Source/secret/context filters match configured names here; repository
     # filters are checked against refreshed inventory after provider reads.
     def validate_filters!(options, config)
-      if options[:source] && config.source_ids.none? { |id| File.fnmatch?(options[:source], id, File::FNM_EXTGLOB) }
+      if options[:source] && config.source_ids.none? { |id| Selector.matches_filter?(options[:source], id) }
         raise ConfigError, "no configured source matches --source #{options[:source].inspect}"
       end
 
       if options[:secret]
         names = config.secrets.map { |secret| secret.fetch("name") }
-        if names.none? { |name| File.fnmatch?(options[:secret], name, File::FNM_EXTGLOB) }
+        if names.none? { |name| Selector.matches_filter?(options[:secret], name) }
           raise ConfigError, "no configured secret matches --secret #{options[:secret].inspect}"
         end
       end
       return unless options[:context]
 
-      source_ids = config.source_ids.select do |source_id|
-        options[:source].nil? || File.fnmatch?(options[:source], source_id, File::FNM_EXTGLOB)
-      end
+      source_ids = config.source_ids.select { |source_id| Selector.matches_filter?(options[:source], source_id) }
       contexts = source_ids.flat_map do |source_id|
         adapter = Providers.adapter_for(config.source(source_id)["type"])
         adapter ? adapter::CONTEXTS : []
       end.uniq
-      return if contexts.any? { |context| File.fnmatch?(options[:context], context, File::FNM_EXTGLOB) }
+      return if contexts.any? { |context| Selector.matches_filter?(options[:context], context) }
 
       raise ConfigError, "no provider context matches --context #{options[:context].inspect}"
     end
@@ -299,9 +322,7 @@ module CredAlignFlow
     def validate_repo_filter!(options, config, state)
       return unless options[:repo]
 
-      sources = config.source_ids.select do |source_id|
-        options[:source].nil? || File.fnmatch?(options[:source], source_id, File::FNM_EXTGLOB)
-      end
+      sources = config.source_ids.select { |source_id| Selector.matches_filter?(options[:source], source_id) }
       matched = sources.any? do |source_id|
         state.selected_repositories(source_id).any? do |_name, repository|
           Selector.matches_any?([options[:repo]], repository)
@@ -337,9 +358,7 @@ module CredAlignFlow
     end
 
     def ensure_inventory!(config, state, source_filter: nil, context_filter: nil)
-      expected = config.source_ids.select do |source_id|
-        source_filter.nil? || File.fnmatch?(source_filter, source_id, File::FNM_EXTGLOB)
-      end
+      expected = config.source_ids.select { |source_id| Selector.matches_filter?(source_filter, source_id) }
       missing = expected - state.data.fetch("sources", {}).keys
       raise StateError, "No cached inventory for #{missing.join(', ')}; run inventory first" unless missing.empty?
 
@@ -352,7 +371,7 @@ module CredAlignFlow
         end
 
         needed = config.contexts_for_source(source_id)
-        needed = needed.select { |c| File.fnmatch?(context_filter, c, File::FNM_EXTGLOB) } if context_filter
+        needed = needed.select { |context| Selector.matches_filter?(context_filter, context) } if context_filter
         uncovered = needed & status["missing_contexts"]
         next if uncovered.empty?
 
@@ -399,28 +418,13 @@ module CredAlignFlow
       only = options[:only]&.uniq
       targets = options[:targets].uniq
       ignored_names = options[:ignore] || []
-      if options[:digests_only] && (only || !targets.empty?)
-        raise ConfigError, "--digests-only cannot be combined with --only or --target"
-      end
+      validate_scaffold_options!(options, only, targets)
 
       candidates = scaffolder.candidates(env_values, config)
       eligible = candidates - ignored_names
-      names = []
-      target_scope = []
-      if only
-        raise ConfigError, "--only requires at least one env name" if only.empty?
-
-        unknown = only - eligible
-        raise ConfigError, "env names are not eligible for import: #{unknown.join(', ')}" unless unknown.empty?
-
-        target_scope = scaffolder.validate_targets(config, targets)
-        names = only
-      elsif !targets.empty?
-        raise ConfigError, "--target requires --only so imported env names are explicit"
-      elsif !options[:digests_only] && !eligible.empty?
-        puts "Unimported env names: #{eligible.join(', ')}"
-        puts "No active entries were added. Use --only NAMES and repeat --target 'SOURCE|CONTEXT|OWNER/REPO' per destination."
-      end
+      names, target_scope = resolve_scaffold_selection(
+        scaffolder, config, eligible, only, targets, digests_only: options[:digests_only]
+      )
 
       ignored = scaffolder.ignore!(ignored_names)
       unless ignored.empty?
@@ -438,6 +442,36 @@ module CredAlignFlow
       end
 
       result = scaffolder.apply!(names, config, env_values, targets: target_scope)
+      report_scaffold_result(result, config, ignored, eligible)
+    end
+
+    def validate_scaffold_options!(options, only, targets)
+      return unless options[:digests_only] && (only || !targets.empty?)
+
+      raise ConfigError, "--digests-only cannot be combined with --only or --target"
+    end
+
+    def resolve_scaffold_selection(scaffolder, config, eligible, only, targets, digests_only:)
+      if only.nil?
+        if targets.empty?
+          unless digests_only || eligible.empty?
+            puts "Unimported env names: #{eligible.join(', ')}"
+            puts "No active entries were added. Use --only NAMES and repeat --target 'SOURCE|CONTEXT|OWNER/REPO' per destination."
+          end
+          return [[], []]
+        end
+
+        raise ConfigError, "--target requires --only so imported env names are explicit"
+      end
+      raise ConfigError, "--only requires at least one env name" if only.empty?
+
+      unknown = only - eligible
+      raise ConfigError, "env names are not eligible for import: #{unknown.join(', ')}" unless unknown.empty?
+
+      [only, scaffolder.validate_targets(config, targets)]
+    end
+
+    def report_scaffold_result(result, config, ignored, eligible)
       added = result["added"]
       digests = result["digests"]
       skipped = result["skipped_digests"]
@@ -463,7 +497,6 @@ module CredAlignFlow
     end
 
     def doctor(config, env_values, verify: false)
-      problems = 0
       puts "Config: #{config.path}"
       puts "Env file: #{@env_path}#{' (not found)' unless File.exist?(@env_path)}"
       puts "State: #{config.state_file}"
@@ -475,47 +508,57 @@ module CredAlignFlow
         auth_ref = config.source(source_id)["auth_env"]
         auth_ref && env_values[auth_ref].to_s.empty? && ENV[auth_ref].to_s.empty?
       end
-      unless missing_auth.empty?
-        puts "Authentication environment references not set:"
-        missing_auth.each { |source_id| puts "  #{source_id}: #{config.source(source_id)['auth_env']}" }
-        problems += 1
+      problems = report_missing_auth(config, missing_auth)
+      problems += report_missing_values(config, env_values)
+      problems += report_digest_status(config, env_values)
+      config.source_ids.each do |source_id|
+        problems += check_doctor_provider(config, env_values, source_id, missing_auth, verify)
       end
+      problems.zero? ? 0 : 1
+    end
 
+    def report_missing_auth(config, missing_auth)
+      return 0 if missing_auth.empty?
+
+      puts "Authentication environment references not set:"
+      missing_auth.each { |source_id| puts "  #{source_id}: #{config.source(source_id)['auth_env']}" }
+      1
+    end
+
+    def report_missing_values(config, env_values)
       missing = config.secrets.select { |secret| config.value_for(secret, env_values).nil? }
       if missing.empty?
         puts "Secret value references: all configured values are available"
       else
         puts "Missing secret value references:"
         missing.each { |secret| puts "  #{secret.fetch('name')}: #{config.value_ref(secret)}" }
-        problems += 1
+      end
+      missing.empty? ? 0 : 1
+    end
+
+    def check_doctor_provider(config, env_values, source_id, missing_auth, verify)
+      # Do not even probe a provider whose credential reference is unset.
+      if missing_auth.include?(source_id)
+        puts "#{source_id}: skipped (authentication reference is not set)"
+        return 0
       end
 
-      problems += report_digest_status(config, env_values)
-
-      config.source_ids.each do |source_id|
-        if missing_auth.include?(source_id)
-          # Do not even probe a provider whose credential reference is unset.
-          puts "#{source_id}: skipped (authentication reference is not set)"
-          next
-        end
-
-        provider = Providers.build(config.source(source_id), env_values)
-        line = "#{source_id}: #{provider.cli_version || 'provider CLI unavailable'}"
-        line += " (pull-only)" unless provider.writable?
-        puts line
-        if verify
-          readiness = provider.readiness
-          puts "  readiness: #{readiness || 'probe unavailable'}"
-          problems += 1 if readiness.nil? || readiness.start_with?("not authenticated:", "gh unavailable:")
-        end
-        config.secrets.each do |secret|
-          next unless config.secret_applies_to_source?(secret, source_id)
-
-          config.contexts_for(secret, source_id).each { |context| provider.validate_context!(context) }
-        end
+      provider = Providers.build(config.source(source_id), env_values)
+      line = "#{source_id}: #{provider.cli_version || 'provider CLI unavailable'}"
+      line += " (pull-only)" unless provider.writable?
+      puts line
+      problems = 0
+      if verify
+        readiness = provider.readiness
+        puts "  readiness: #{readiness || 'probe unavailable'}"
+        problems += 1 if readiness.nil? || readiness.start_with?("not authenticated:", "gh unavailable:")
       end
+      config.secrets.each do |secret|
+        next unless config.secret_applies_to_source?(secret, source_id)
 
-      problems.zero? ? 0 : 1
+        config.contexts_for(secret, source_id).each { |context| provider.validate_context!(context) }
+      end
+      problems
     end
 
     def report_digest_status(config, env_values)

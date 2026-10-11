@@ -84,6 +84,7 @@ bin/cred-align-flow plan --config /private/path/config.yml --env-file /private/p
 
 ```yaml
 version: 1
+check_for_updates: false
 # All three file paths are optional; relative values resolve against
 # this file's directory. Defaults: XDG inventory, derived rules file,
 # env-file discovery (.env.local -> config/.env.local -> config/secrets.env
@@ -186,6 +187,8 @@ bundle exec bin/cred-align-flow ui
 ```
 
 Open the printed `http://127.0.0.1:8043/` address. Use `--config`, `--env-file`, and `--state` to select local files, or `--port` to choose another local port. Sources and token definitions are read-only in the UI — edit the YAML config by hand. The only editable controls are the per-repository token rule dropdowns, which Save writes to the rules file. The UI shows the inventory and plan statuses, including whether a token is assigned by defaults or a repository rule, and the remote/applied timestamps available in local state. “Refresh repository inventory” makes provider read requests only. “Cancel changes” reloads the saved rules. Actual env-file values are never returned to the browser.
+
+The new-release indicator is opt-in: set `check_for_updates: true` in the YAML config. When enabled, the local UI makes one same-origin request per page session, and the local server checks this repository's public GitHub releases. No configuration, repository names, or secret values are sent; GitHub can see the server's outbound IP. When this option is absent or false, the browser does not request update status and the server makes no outbound release-check request. If the check is unavailable, the indicator stays hidden.
 
 Every save revalidates the draft rules (shape plus source/token references), requires the page's per-run CSRF token, and rejects stale saves if the config, rules, or inventory changed while the page was open. The UI also polls an HMAC-protected display revision that includes env-file bytes, so availability/value status refreshes when only the env file changes; an env-only update does not invalidate a rules-only save. Rules for repositories no longer in inventory are kept and flagged so they can be removed deliberately. Unimported env names are shown with the explicit `scaffold --only ... --target ...` workflow.
 
@@ -313,6 +316,16 @@ Run the full quality gate on Ruby 3.4.10:
 ```bash
 bundle exec rake check
 ```
+
+The application version has one source of truth in `lib/cred_align_flow/version.rb`. Use the Rake task to bump it; patch increments `Z`, minor increments `Y` and resets `Z`, and major increments `X` and resets both lower components:
+
+```bash
+bundle exec rake 'version:bump[patch]'
+bundle exec rake 'version:bump[minor]'
+bundle exec rake 'version:bump[major]'
+```
+
+The bump task updates only the canonical version file so release notes remain human-written. `rake check` runs `version:check`, which requires the current version to have a dated changelog heading and matching GitHub release link. After editing the changelog, run the full gate, commit and push, wait for CI, then tag `vX.Y.Z` and create the GitHub release.
 
 For focused local debugging, individual syntax/tests may also be run:
 

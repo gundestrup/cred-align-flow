@@ -5,6 +5,35 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.2] - 2026-10-11
+
+Patch release. The CLI remains provider-safe by default; the new UI release
+indicator is explicitly opt-in, and automated checks still use offline/fake
+services rather than writing to production providers.
+
+### Added
+
+- An opt-in local UI update indicator, enabled only by `check_for_updates: true`.
+  With the default/omitted setting there are no release-check requests; an
+  enabled check contacts only this project's public GitHub releases endpoint.
+- `bundle exec rake version:bump[patch|minor|major]` and a version/changelog
+  consistency check wired into `rake check`.
+
+### Changed
+
+- CLI apply/plan, scaffold, and doctor workflows are split into focused methods;
+  option registration, filtering, and force-aware actionability share policies.
+- Planner and applier use one strict ISO8601 timestamp parser. Legacy local
+  apply-time fallback remains for missing provider timestamps, while malformed
+  provider timestamps fail closed.
+
+### Fixed
+
+- A malformed `applied_remote_at` can no longer fall back to a local timestamp
+  and be mistaken for a trustworthy provider baseline.
+- CLI option scanning now shares value-argument advancement, preserving option
+  values that happen to look like commands or global flags.
+
 ## [0.0.1] - 2026-10-11
 
 First public alpha release. The CLI is functional and covered by an offline
@@ -48,4 +77,5 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.0.2]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.2
 [0.0.1]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.1

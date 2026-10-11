@@ -4,6 +4,20 @@ require_relative "test_helper"
 require "stringio"
 
 class ConfigServerTest < Minitest::Test
+  class FakeReleaseChecker
+    attr_reader :requests
+
+    def initialize(version)
+      @version = version
+      @requests = []
+    end
+
+    def newer_version(current_version:)
+      @requests << current_version
+      @version
+    end
+  end
+
   def test_local_ui_uses_csrf_protection_and_never_serves_values
     with_rack_app do |app, config_path|
       page_status, page_headers, page_body = call(app, "GET", "/")
@@ -15,6 +29,7 @@ class ConfigServerTest < Minitest::Test
       assert_equal "text/html; charset=utf-8", page_headers.fetch("Content-Type")
       assert_includes page_body.join, "Cancel changes"
       assert_equal 200, data_status
+      refute data.fetch("check_for_updates")
       refute_includes data_body.join, "very-secret-value-should-not-appear"
       refute_nil token
 
@@ -49,6 +64,57 @@ class ConfigServerTest < Minitest::Test
 
       assert_equal "include", JSON.parse(File.read(rules_path)).dig("rules", "github-main", "example/repo", "SAMPLE_TOKEN")
     end
+  end
+
+  def test_release_check_endpoint_is_inert_when_disabled
+    with_rack_app do |app, _config_path, checker|
+      status, _headers, body = call(app, "GET", "/api/update")
+
+      assert_equal 200, status
+      assert_nil JSON.parse(body.join).fetch("update_version")
+      assert_empty checker.requests
+    end
+  end
+
+  def test_release_check_endpoint_returns_a_newer_version_when_enabled
+    with_rack_app(check_for_updates: true) do |app, _config_path, checker|
+      status, _headers, body = call(app, "GET", "/api/update")
+
+      assert_equal 200, status
+      assert_equal "v0.0.2", JSON.parse(body.join).fetch("update_version")
+      assert_equal [CredAlignFlow::VERSION], checker.requests
+    end
+  end
+
+  def test_ui_skips_release_check_when_disabled
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_update_check_opt_in(script) }
+      (async () => {
+        pending[0](response("initial"));
+        await new Promise((resolve) => setImmediate(resolve));
+        process.stdout.write(requests.join(","));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    assert_equal "/api/data", stdout if stdout
+  end
+
+  def test_ui_shows_newer_release_when_update_check_is_enabled
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_update_check_opt_in(script) }
+      (async () => {
+        pending[0](response("initial", true));
+        await new Promise((resolve) => setImmediate(resolve));
+        if (requests.join(",") !== "/api/data,/api/update") throw new Error(`unexpected requests: ${requests}`);
+        pending[1]({ ok: true, status: 200, json: async () => ({ update_version: "v0.0.2" }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        const indicator = elements.get("update-indicator");
+        if (indicator.hidden) throw new Error("release indicator stayed hidden");
+        process.stdout.write(JSON.stringify({ version: elements.get("update-version").textContent, href: indicator.href }));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    result = JSON.parse(stdout) if stdout
+    assert_equal "v0.0.2", result.fetch("version") if result
+    assert_includes result.fetch("href"), "/releases/tag/v0.0.2" if result
   end
 
   def test_ui_ignores_an_older_poll_response_that_arrives_late
@@ -161,9 +227,10 @@ class ConfigServerTest < Minitest::Test
     harness = <<~JAVASCRIPT
       const vm = require("vm");
       const pending = [];
+      const requests = [];
       const elements = new Map();
       const node = () => ({
-        textContent: "", value: "", className: "", disabled: false, style: {},
+        textContent: "", value: "", className: "", disabled: false, hidden: true, style: {},
         _handlers: {},
         classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
         append() {}, replaceChildren() {}, setAttribute() {},
@@ -183,21 +250,29 @@ class ConfigServerTest < Minitest::Test
       const sandbox = {
         document,
         window,
-        fetch() { return new Promise((resolve) => pending.push(resolve)); },
+        fetch(path) {
+          requests.push(path);
+          return new Promise((resolve) => pending.push(resolve));
+        },
         setInterval(callback) { sandbox.poll = callback; return 1; },
         setTimeout() { return 1; },
         clearTimeout() {}
       };
       vm.runInNewContext(#{browser_script.to_json}, sandbox);
-      const view = (name) => ({
+      const view = (name, checkForUpdates = false) => ({
         csrf: "test-csrf", config_file: `${name}.yml`, rules_file: "rules.json",
         revision: name, display_revision: name, generated_at: null, rules: {},
+        check_for_updates: checkForUpdates,
         secrets: [], sources: [], orphan_rules: [], unimported_env_names: [],
         ignored_env_names: [], action_summary: {}, provider_contexts: {},
         meta: { statuses: ["ok", "create"], status_help: {}, value_pills: {},
                 field_help: [{ term: "T", text: "uses `code` spans" }] }
       });
-      const response = (name) => ({ ok: true, status: 200, json: async () => view(name) });
+      const response = (name, checkForUpdates = false) => ({
+        ok: true,
+        status: 200,
+        json: async () => view(name, checkForUpdates)
+      });
       #{scenario}
     JAVASCRIPT
     stdout, stderr, status = Open3.capture3("node", "-e", harness)
@@ -214,6 +289,14 @@ class ConfigServerTest < Minitest::Test
   def extract_browser_script
     html = File.read(File.expand_path("../lib/cred_align_flow/config_ui.html", __dir__), encoding: "UTF-8")
     html.scan(%r{<script nonce="__CSP_NONCE__">(.*?)</script>}m).flatten.join("\n").gsub("__CSRF_TOKEN__", "test-csrf")
+  end
+
+  def assert_update_check_opt_in(script)
+    check = script[/async function checkForUpdate\(\) \{.*?\n    \}/m]
+
+    assert(check)
+    assert_includes check, "!view.check_for_updates"
+    assert_includes check, "fetch(\"/api/update\""
   end
 
   def assert_poll_sequence_guard(script)
@@ -265,7 +348,7 @@ class ConfigServerTest < Minitest::Test
     )
   end
 
-  def with_rack_app
+  def with_rack_app(check_for_updates: false)
     Dir.mktmpdir do |dir|
       config_path = File.join(dir, "config.yml")
       env_path = File.join(dir, ".env.local")
@@ -278,6 +361,7 @@ class ConfigServerTest < Minitest::Test
         },
         "secrets" => [{ "name" => "SAMPLE_TOKEN", "value_env" => "SAMPLE_TOKEN_VALUE" }]
       }
+      config["check_for_updates"] = true if check_for_updates
       File.write(config_path, YAML.dump(config))
       File.write(env_path, "SAMPLE_TOKEN_VALUE=very-secret-value-should-not-appear\n")
       editor = CredAlignFlow::ConfigEditor.new(
@@ -285,7 +369,9 @@ class ConfigServerTest < Minitest::Test
         env_path: env_path,
         state_path: state_path
       )
-      yield CredAlignFlow::ConfigRackApp.new(editor: editor, port: 8043), config_path
+      checker = FakeReleaseChecker.new("v0.0.2")
+      app = CredAlignFlow::ConfigRackApp.new(editor: editor, port: 8043, release_checker: checker)
+      yield app, config_path, checker
     end
   end
 end

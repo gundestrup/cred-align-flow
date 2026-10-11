@@ -35,6 +35,13 @@ bundle install
 bundle exec rake check
 ```
 
-`rake check` runs tests, RuboCop, bundler-audit, a non-blocking flay duplication report, and Semgrep CE (which self-skips when the binary is absent; rules live in `.semgrep.yml`). `rake flay` prints the structural duplication report on its own — it is informational, not a quality gate. `rake test:integration` runs the env-gated disposable-service tests under `test/integration/` and is deliberately outside `check` — it skips cleanly without `CRED_ALIGN_FLOW_FORGEJO_URL`/`CRED_ALIGN_FLOW_FORGEJO_TOKEN` pointing at a loopback service.
+`rake check` runs version/changelog consistency, tests, RuboCop, bundler-audit, non-blocking flay/flog reports, and Semgrep CE (which self-skips when the binary is absent; rules live in `.semgrep.yml`). `rake flay` prints the structural duplication report on its own — it is informational, not a quality gate. `rake test:integration` runs the env-gated disposable-service tests under `test/integration/` and is deliberately outside `check` — it skips cleanly without `CRED_ALIGN_FLOW_FORGEJO_URL`/`CRED_ALIGN_FLOW_FORGEJO_TOKEN` pointing at a loopback service.
 
 The tests must not contact GitHub or require real credentials. See `test/integration/README.md` before adding any pull or push integration test. `test/config_server_test.rb` runs the embedded UI script in a Node VM when Node.js is present (CI sets `NODE_REQUIRED=1`) and falls back to static ordering assertions without it.
+
+## Release process
+
+- `lib/cred_align_flow/version.rb` is the single source of truth for the application version. Use `bundle exec rake 'version:bump[patch]'`, `bundle exec rake 'version:bump[minor]'`, or `bundle exec rake 'version:bump[major]'`; the task updates only this file. Keep the dated release heading and GitHub release link in `CHANGELOG.md` in sync; `version:check` is part of `rake check`.
+- This CLI app has no gemspec and is not published to RubyGems. Release tags use `vX.Y.Z`; create a GitHub Release object for each shipped version.
+- Run the full gate after updating the version and changelog. Commit the complete release tree, push `main`, verify `origin/main` and its CI run, then tag and push the tag and create the GitHub Release. The tag must point at the checked, pushed commit; do not force-move a published tag.
+- UI release checks are opt-in only (`check_for_updates: true`). The missing/default setting must cause zero outbound release-check requests. Tests use a loopback API double; never call GitHub from the test suite.
