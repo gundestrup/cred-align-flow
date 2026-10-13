@@ -7,6 +7,22 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-13
+
+### Changed
+
+- Documentation split for manageability: `README.md` is now a short landing
+  page with a quick start and per-command summaries linking to the topic
+  files — warnings/security model in `README.safety.md`, setup and the YAML
+  configuration reference in `README.config.md`, the command reference, plan
+  statuses, and rotation in `README.usage.md`, the local config UI in
+  `README.ui.md`, and provider design plus the development workflow in
+  `README.devel.md`.
+- Development Ruby pin bumped to 3.4.11; the declared floor remains 3.4.10.
+- RuboCop 1.92.0.
+- CI pins: `ruby/setup-ruby` v1.329.0, `codecov/codecov-action` v7.1.1
+  (node24-runner releases; input set unchanged), Semgrep CE 1.180.0.
+
 ## [0.0.3] - 2026-10-11
 
 Patch release completing the opt-in update checker with a configurable
@@ -97,6 +113,7 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.0.4]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.4
 [0.0.3]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.3
 [0.0.2]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.2
 [0.0.1]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.1
