@@ -44,6 +44,11 @@ module CredAlignFlow
 
       def self.normalize_host(host)
         hostname = host.to_s.downcase
+        # Hostnames are limited to DNS characters; a leading "-" would be
+        # parsed as a flag when the host reaches a gh command line.
+        unless hostname.match?(/\A[a-z0-9][a-z0-9.-]*\z/)
+          raise ConfigError, "Invalid GitHub host #{host.to_s[0, 60].inspect}"
+        end
         return "github.com" if hostname == "api.github.com"
         return hostname.delete_prefix("api.") if hostname.start_with?("api.") && hostname.end_with?(".ghe.com")
 
@@ -54,6 +59,9 @@ module CredAlignFlow
         super()
         @source = source
         @owner = source.fetch("owner") { raise ConfigError, "GitHub source is missing owner" }
+        unless @owner.is_a?(String) && @owner.match?(GH_NAME_PATTERN)
+          raise ConfigError, "invalid GitHub owner #{@owner.to_s[0, 40].inspect}"
+        end
         @host = self.class.host_for(source)
         @env_values = env_values
         @truncated = false
@@ -78,6 +86,7 @@ module CredAlignFlow
       end
 
       def repository(name)
+        validate_name_arg!(name)
         result = run_json(["repo", "view", name, "--json", REPOSITORY_FIELDS.join(",")])
         raise ProviderError, "gh repo view returned malformed data for #{name}" unless result.is_a?(Hash)
 
@@ -86,6 +95,7 @@ module CredAlignFlow
 
       def secrets(repository, context)
         validate_context!(context)
+        validate_name_arg!(repository)
         validate_secret_entries!(run_json([
                                             "secret", "list",
                                             "--repo", repository,
@@ -98,8 +108,14 @@ module CredAlignFlow
       # with a number or the reserved GITHUB_ prefix; max 100 characters.
       SECRET_NAME_PATTERN = /\A[A-Za-z_][A-Za-z0-9_]{0,99}\z/
 
+      # gh argv hygiene: owner and owner/repo values must look like GitHub
+      # names — no leading "-" (would parse as a flag) and no whitespace
+      # or shell characters. Checked before a value reaches a command line.
+      GH_NAME_PATTERN = %r{\A[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)?\z}
+
       def set_secret(repository, context, name, value)
         validate_context!(context)
+        validate_name_arg!(repository)
         unless name.is_a?(String) && name.match?(SECRET_NAME_PATTERN) && !name.start_with?("GITHUB_")
           raise ProviderError, "invalid GitHub secret name #{name.to_s[0, 40].inspect}"
         end
@@ -130,6 +146,12 @@ module CredAlignFlow
       end
 
       private
+
+      def validate_name_arg!(value)
+        unless value.is_a?(String) && value.match?(GH_NAME_PATTERN)
+          raise ProviderError, "invalid GitHub repository or owner #{value.to_s[0, 40].inspect}"
+        end
+      end
 
       def validate_secret_entries!(list, repository)
         valid = list.is_a?(Array) && list.all? do |entry|
@@ -197,7 +219,10 @@ module CredAlignFlow
       # Bounded subprocess: values travel via stdin only, stderr is drained but
       # never surfaced, and a hung gh is killed after the timeout.
       def run(arguments, stdin_data: nil, require_auth: true, include_auth: true)
-        stdin, stdout, stderr, wait_thr = Open3.popen3(
+        # argv-form exec (no shell): every non-static argument is a
+        # validated GitHub name or a static flag, and secret values
+        # travel via stdin only.
+        stdin, stdout, stderr, wait_thr = Open3.popen3( # nosemgrep: dangerous-exec -- argv form, no shell; arguments validated
           command_env(require_auth: require_auth, include_auth: include_auth), "gh", *arguments
         )
         stdout_reader = Thread.new { stdout.read }
