@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Exec(NODE_REQUIRED=1 bundle exec)",
-      "Exec(SEMGREP_REQUIRED=1 NODE_REQUIRED=1 bundle exec)"
+      "Exec(SEMGREP_REQUIRED=1 NODE_REQUIRED=1 bundle exec)",
+      "Exec(git)"
     ]
   }
 }
