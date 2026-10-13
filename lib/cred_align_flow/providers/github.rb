@@ -46,9 +46,8 @@ module CredAlignFlow
         hostname = host.to_s.downcase
         # Hostnames are limited to DNS characters; a leading "-" would be
         # parsed as a flag when the host reaches a gh command line.
-        unless hostname.match?(/\A[a-z0-9][a-z0-9.-]*\z/)
-          raise ConfigError, "Invalid GitHub host #{host.to_s[0, 60].inspect}"
-        end
+        raise ConfigError, "Invalid GitHub host #{host.to_s[0, 60].inspect}" unless hostname.match?(HOST_PATTERN)
+
         return "github.com" if hostname == "api.github.com"
         return hostname.delete_prefix("api.") if hostname.start_with?("api.") && hostname.end_with?(".ghe.com")
 
@@ -62,6 +61,7 @@ module CredAlignFlow
         unless @owner.is_a?(String) && @owner.match?(GH_NAME_PATTERN)
           raise ConfigError, "invalid GitHub owner #{@owner.to_s[0, 40].inspect}"
         end
+
         @host = self.class.host_for(source)
         @env_values = env_values
         @truncated = false
@@ -112,6 +112,7 @@ module CredAlignFlow
       # names — no leading "-" (would parse as a flag) and no whitespace
       # or shell characters. Checked before a value reaches a command line.
       GH_NAME_PATTERN = %r{\A[A-Za-z0-9_.][A-Za-z0-9_.-]*(/[A-Za-z0-9_.][A-Za-z0-9_.-]*)?\z}
+      HOST_PATTERN = /\A[a-z0-9][a-z0-9.-]*\z/
 
       def set_secret(repository, context, name, value)
         validate_context!(context)
@@ -148,9 +149,9 @@ module CredAlignFlow
       private
 
       def validate_name_arg!(value)
-        unless value.is_a?(String) && value.match?(GH_NAME_PATTERN)
-          raise ProviderError, "invalid GitHub repository or owner #{value.to_s[0, 40].inspect}"
-        end
+        return if value.is_a?(String) && value.match?(GH_NAME_PATTERN)
+
+        raise ProviderError, "invalid GitHub repository or owner #{value.to_s[0, 40].inspect}"
       end
 
       def validate_secret_entries!(list, repository)
