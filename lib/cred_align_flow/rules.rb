@@ -5,30 +5,47 @@ require "json"
 require "tempfile"
 
 module CredAlignFlow
-  # Per-repository token overrides stored in a JSON file next to the YAML
-  # config. The YAML file is hand-edited intent (sources, secrets, and each
-  # secret's default scope); this file holds repo-specific include/exclude
-  # overrides managed by the local config UI. The UI writes only this file;
-  # it never modifies the YAML config.
+  # UI-managed file stored next to the YAML config. The YAML file is
+  # hand-edited intent (sources, token identity, and each token's YAML
+  # defaults); this file holds the local config UI's managed state:
   #
-  # Format:
   #   {
-  #     "version": 1,
+  #     "version": 2,
   #     "rules": {
   #       "<source_id>": {
   #         "<owner/repo>": { "<SECRET_NAME>": "default|include|exclude" }
   #       }
+  #     },
+  #     "token_defaults": {
+  #       "<SECRET_NAME>": { "visibility" => ..., "sources" => ...,
+  #                          "targets" => ..., "exclude_repositories" => ... }
   #     }
   #   }
   #
-  # "include"/"exclude" override the secret's default source/visibility scope
-  # for that repository; "default" restores the default and cancels a
-  # hand-authored repository_rules or exclude_repositories match.
-  # exclude_sources in the YAML config always wins over a rules file include.
+  # "rules" — "include"/"exclude" override the secret's default
+  # source/visibility scope for that repository; "default" restores the
+  # default and cancels a hand-authored repository_rules or
+  # exclude_repositories match. exclude_sources in the YAML config always
+  # wins over a rules file include.
+  #
+  # "token_defaults" — per-secret default-scope overrides that replace the
+  # same-named YAML fields (a field absent here keeps the YAML value).
+  # Identity and lifecycle keys (name, value_env, digests, versions,
+  # exclude_sources, repository_rules) are never overridable.
+  #
+  # Named presets live in the sibling preset files (see PresetLibrary);
+  # the UI stamps them into this file by copy.
+  #
+  # Version 1 files contain only "rules". Version 2 adds
+  # "token_defaults"; older builds reject the file outright instead of
+  # silently ignoring overrides that change the plan.
   class Rules
     ACTIONS = %w[default include exclude].freeze
     SECRET_NAME_PATTERN = /\A[A-Za-z_][A-Za-z0-9_]*\z/
     SOURCE_ID_PATTERN = /\A[^\s|]+\z/
+    TOKEN_DEFAULT_KEYS = %w[visibility sources targets exclude_repositories].freeze
+    TOP_LEVEL_KEYS = %w[version rules token_defaults].freeze
+    SUPPORTED_VERSIONS = [1, 2].freeze
 
     attr_reader :path, :data
 
@@ -46,6 +63,53 @@ module CredAlignFlow
       !owner.empty? && !repository.empty? && !name.match?(/[\s*?\[\]{}|]/)
     end
 
+    # Shape-level checks only: source existence, visibility values, and
+    # target contexts are validated when Config merges a token_defaults
+    # entry into its secret and runs full secret validation. Preset
+    # libraries reuse the same shapes for token presets.
+    def self.validate_scope_fields!(fields, context)
+      raise ConfigError, "#{context} must be a mapping" unless fields.is_a?(Hash)
+
+      unknown = fields.keys - TOKEN_DEFAULT_KEYS
+      raise ConfigError, "#{context} has unknown keys: #{unknown.join(', ')}" unless unknown.empty?
+
+      fields.each do |key, value|
+        valid =
+          case key
+          when "visibility" then value.is_a?(String)
+          when "sources" then string_list_shape?(value)
+          when "targets" then targets_shape?(value)
+          when "exclude_repositories" then exclusions_shape?(value)
+          end
+        raise ConfigError, "#{context} #{key} has an invalid shape" unless valid
+      end
+    end
+
+    def self.string_list_shape?(value)
+      return true if value.is_a?(String) && !value.empty?
+      return false unless value.is_a?(Array)
+
+      value.all? { |entry| entry.is_a?(String) && !entry.empty? }
+    end
+    private_class_method :string_list_shape?
+
+    def self.targets_shape?(value)
+      return false unless value.is_a?(Hash)
+
+      value.all? do |_type, contexts|
+        string_list_shape?(contexts) ||
+          (contexts.is_a?(Hash) && contexts.values.all? { |enabled| [true, false].include?(enabled) })
+      end
+    end
+    private_class_method :targets_shape?
+
+    def self.exclusions_shape?(value)
+      return string_list_shape?(value) unless value.is_a?(Hash)
+
+      value.all? { |_source, patterns| string_list_shape?(patterns) }
+    end
+    private_class_method :exclusions_shape?
+
     def initialize(path, data: nil)
       @path = File.expand_path(path)
       @data = data || read_existing || empty_rules
@@ -54,6 +118,14 @@ module CredAlignFlow
 
     def entries
       @data.fetch("rules")
+    end
+
+    def token_defaults
+      @data.fetch("token_defaults")
+    end
+
+    def default_overlay(secret_name)
+      token_defaults[secret_name]
     end
 
     def rule(source_id, repository_name, secret_name)
@@ -79,6 +151,12 @@ module CredAlignFlow
                 "unknown tokens: #{unknown.join(', ')}"
         end
       end
+
+      unknown = token_defaults.keys - secret_names
+      return if unknown.empty?
+
+      raise ConfigError,
+            "#{File.basename(@path)} token_defaults references unknown tokens: #{unknown.join(', ')}"
     end
 
     def save!
@@ -112,19 +190,55 @@ module CredAlignFlow
     end
 
     def empty_rules
-      { "version" => 1, "rules" => {} }
+      { "version" => 1, "rules" => {}, "token_defaults" => {} }
     end
 
     def validate!
-      version = @data.fetch("version", 1)
-      raise ConfigError, "rules file version must be the integer 1" unless version.is_a?(Integer) && version == 1
+      unknown = @data.keys - TOP_LEVEL_KEYS
+      raise ConfigError, "rules file has unknown keys: #{unknown.join(', ')}" unless unknown.empty?
 
+      version = @data.fetch("version", 1)
+      unless version.is_a?(Integer) && SUPPORTED_VERSIONS.include?(version)
+        raise ConfigError, "rules file version must be the integer 1 or 2"
+      end
+
+      rules = validate_rules_section!
+      defaults = validate_defaults_section!
+
+      if version == 1 && defaults.any?
+        raise ConfigError,
+              "rules file version 1 holds only per-repository rules; " \
+              "token_defaults require version 2"
+      end
+
+      @data["rules"] = rules
+      @data["token_defaults"] = defaults
+      @data["version"] = defaults.empty? ? 1 : 2
+    end
+
+    def validate_rules_section!
       rules = @data.fetch("rules", {})
       raise ConfigError, "rules file rules must be a mapping" unless rules.is_a?(Hash)
 
       rules.each { |source_id, repositories| validate_source_rules!(source_id, repositories) }
-      @data["rules"] = rules
-      @data["version"] = version
+      rules
+    end
+
+    def validate_defaults_section!
+      validate_mapping_section!("token_defaults").each do |name, fields|
+        unless name.is_a?(String) && name.match?(SECRET_NAME_PATTERN)
+          raise ConfigError, "token_defaults keys must be valid secret names (#{name.inspect})"
+        end
+
+        self.class.validate_scope_fields!(fields, "token_defaults entry for #{name.inspect}")
+      end
+    end
+
+    def validate_mapping_section!(key)
+      section = @data.fetch(key, {})
+      raise ConfigError, "rules file #{key} must be a mapping" unless section.is_a?(Hash)
+
+      section
     end
 
     def validate_source_rules!(source_id, repositories)

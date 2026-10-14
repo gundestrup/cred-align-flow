@@ -43,7 +43,7 @@ Full setup details and the configuration reference live in [README.config.md](RE
 - `check` — fail when expected secrets are missing, unverified, stale, or remotely newer.
 - `apply` — write missing or stale secrets after a confirmed plan; supports `--dry-run`, `--yes`, `--force`, and `--source`/`--repo`/`--secret`/`--context` filters.
 - `scaffold` — record `value_digest` fingerprints and import env names into the config.
-- `ui` — local browser editor for per-repository token rules.
+- `ui` — local browser editor for token defaults, presets, and per-repository token rules.
 
 Full command reference, plan statuses, and the rotation workflow: [README.usage.md](README.usage.md).
 
@@ -52,9 +52,10 @@ Full command reference, plan statuses, and the rotation workflow: [README.usage.
 | Document | Covers |
 |---|---|
 | [README.safety.md](README.safety.md) | Warnings, irreversibility, security model |
-| [README.config.md](README.config.md) | Requirements, local setup, YAML configuration, repository rules file |
+| [README.config.md](README.config.md) | Requirements, local setup, YAML configuration, UI-managed rules file |
 | [README.usage.md](README.usage.md) | Command reference, plan statuses, rotation |
 | [README.ui.md](README.ui.md) | Local configuration UI |
+| [README.presets.md](README.presets.md) | Reusable UI presets — token scope templates and repo rule bundles |
 | [README.devel.md](README.devel.md) | Provider adapter contract, development workflow, tests |
 
 ## License

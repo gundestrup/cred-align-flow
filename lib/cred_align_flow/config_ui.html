@@ -73,6 +73,13 @@
     .repo-rule-list summary { cursor: pointer; font-weight: 650; }
     .lock-note { color: #8a2525; font-size: .84rem; }
     .orphan-remove { margin-left: .4rem; padding: .1rem .5rem; font-size: .8rem; }
+    input[type="text"], input.preset-name { border: 1px solid #8997a7; border-radius: .3rem; padding: .4rem .55rem; width: 100%; }
+    .check-row { display: flex; flex-wrap: wrap; gap: .35rem .9rem; }
+    .check-row label { display: inline-flex; align-items: center; gap: .3rem; font-weight: 400; }
+    .override-tag { display: inline-block; border-radius: 999px; padding: 0 .45rem; font-size: .75rem; font-weight: 650; color: #51318d; background: #e9e1fb; margin-left: .35rem; }
+    .scope-note { font-size: .82rem; color: #536273; }
+    .preset-head { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
+    .preset-head input.preset-name { max-width: 18rem; font-weight: 650; }
     @media (max-width: 680px) {
       header, main { padding-left: .75rem; padding-right: .75rem; }
       .actions { padding-left: .75rem; }
@@ -90,10 +97,13 @@
     </a>
     <p id="config-file" class="muted"></p>
     <div class="notice">
-      This page edits per-repository token rules in the rules file only. Sources, tokens, and their default rules
-      come from the YAML configuration, which is edited by hand — this page never writes it. It never displays or
-      changes values from the local env file and never writes provider secrets. Inventory refresh makes
-      read-only provider requests. Pushing values is always a CLI action (<code>apply</code>), which prints the fresh plan and requires confirmation (or <code>--yes</code> in noninteractive use).
+      This page edits token defaults and per-repository token rules in the rules file, and reusable
+      presets in the preset files — nothing else. Sources and token definitions come from the YAML
+      configuration, which is edited by hand — this page never writes it. It never displays or changes
+      values from the local env file and never writes provider secrets.
+      Inventory refresh makes read-only provider requests. Pushing values is always a CLI action
+      (<code>apply</code>), which prints the fresh plan and requires confirmation (or <code>--yes</code> in
+      noninteractive use).
     </div>
     <details class="help">
       <summary>What the fields mean</summary>
@@ -112,7 +122,7 @@
   <div id="message" class="message" role="status" aria-live="polite"></div>
   <main>
     <section class="panel" aria-labelledby="defaults-heading">
-      <h2 id="defaults-heading">Token defaults <span class="muted small">(read-only — edit the YAML config)</span></h2>
+      <h2 id="defaults-heading">Token defaults <span class="muted small">(overrides are saved to the rules file)</span></h2>
       <div class="legend">
         <span class="origin origin-default">Assigned by token defaults</span>
         <span class="origin origin-manual">Assigned by repository override</span>
@@ -123,6 +133,20 @@
       <div id="action-summary" class="muted small"></div>
       <div id="unimported"></div>
       <div id="tokens"></div>
+    </section>
+    <section class="panel" aria-labelledby="presets-heading">
+      <h2 id="presets-heading">Presets</h2>
+      <p class="muted small">
+        Reusable templates stored in the preset files. A token preset stamps scope fields into a
+        token's rules-file overrides; a repository preset stamps token rules onto a repository's
+        rules-file entry. Editing a preset afterwards does not re-apply it.
+      </p>
+      <h3>Token presets</h3>
+      <div id="token-presets"></div>
+      <button id="add-token-preset">New token preset</button>
+      <h3>Repository presets</h3>
+      <div id="repo-presets"></div>
+      <button id="add-repo-preset">New repository preset</button>
     </section>
     <section class="panel" aria-labelledby="sources-heading">
       <h2 id="sources-heading">Sources and repositories</h2>
@@ -140,8 +164,12 @@
     let csrfToken = window.CRED_ALIGN_CSRF;
     const message = document.getElementById("message");
     let view;
-    let baseline = {};
-    let draft = {};
+    // The draft mirrors the UI-managed files' editable sections: the
+    // rules file's rules and token_defaults, plus the two preset
+    // libraries. All of them post together so a save is always
+    // internally consistent.
+    let baseline = { rules: {}, token_defaults: {}, token_presets: {}, repo_presets: {} };
+    let draft = { rules: {}, token_defaults: {}, token_presets: {}, repo_presets: {} };
     let previewValid = true;
     let previewPending = false;
     let previewSequence = 0;
@@ -246,13 +274,13 @@
       if (result.csrf) csrfToken = result.csrf;
       view = result;
       if (applyRules) {
-        baseline = copy(result.rules || {});
+        baseline = viewSections(result);
         draft = copy(baseline);
         previewValid = true;
         previewPending = false;
       }
       document.getElementById("config-file").textContent =
-        `Config ${result.config_file} (read-only) · rules ${result.rules_file} · inventory last refreshed ${result.generated_at || "never"}.`;
+        `Config ${result.config_file} (read-only) · rules file ${result.rules_file} · inventory last refreshed ${result.generated_at || "never"}.`;
       renderAll();
       updateButtons();
       checkForUpdate();
@@ -285,6 +313,7 @@
     function renderAll() {
       renderHelp();
       renderTokens();
+      renderPresets();
       renderUnimported();
       renderSummary();
       renderPreview();
@@ -294,16 +323,39 @@
       previewValid = false;
       previewPending = true;
       updateButtons();
-      setMessage("Checking the draft rules against the configuration…");
+      setMessage("Checking the draft changes against the configuration…");
       clearTimeout(previewTimer);
       const sequence = ++previewSequence;
       previewTimer = setTimeout(() => previewDraft(sequence), 300);
     }
 
+    // The editable sections a view payload carries; missing keys
+    // (older payloads, minimal fixtures) mean empty sections.
+    function viewSections(result) {
+      return {
+        rules: copy(result.rules || {}),
+        token_defaults: copy(result.token_defaults || {}),
+        token_presets: copy(result.token_presets || {}),
+        repo_presets: copy(result.repo_presets || {})
+      };
+    }
+
+    // All editable sections post together; the server validates the
+    // combined candidate documents, not each section in isolation.
+    function draftPayload(revision) {
+      return {
+        revision: revision,
+        rules: draft.rules || {},
+        token_defaults: draft.token_defaults || {},
+        token_presets: draft.token_presets || {},
+        repo_presets: draft.repo_presets || {}
+      };
+    }
+
     async function previewDraft(sequence) {
       const viewSequence = ++issuedSequence;
       try {
-        const result = await post("/api/preview", { revision: view.revision, rules: draft });
+        const result = await post("/api/preview", draftPayload(view.revision));
         if (sequence !== previewSequence) return;
         if (result.csrf) csrfToken = result.csrf;
         if (viewSequence > appliedSequence) {
@@ -311,7 +363,7 @@
           acceptView(result, { applyRules: false });
         }
         previewValid = true;
-        setMessage("Draft rules are valid. Save writes them to the local rules file.", "success");
+        setMessage("Draft changes are valid. Save writes them to the local rules and preset files.", "success");
       } catch (error) {
         if (sequence !== previewSequence) return;
         previewValid = false;
@@ -331,42 +383,225 @@
       container.append(field);
     }
 
-    function sourceScopeText(secret) {
-      const sources = Array.isArray(secret.sources) ? secret.sources.map(String) : [];
-      return sources.length === 0 || sources.includes("all") ? "All configured sources" : sources.join(", ");
+    // ---- token defaults editing -------------------------------------
+    // Controls edit a sparse draft overlay: a key present in
+    // draft.token_defaults[name] replaces that YAML field; keys absent
+    // inherit the YAML value (or the built-in default). Setting a field
+    // back to its YAML value prunes the key so the file stays minimal.
+
+    function normValue(value) {
+      if (Array.isArray(value)) return value.map(String).slice().sort();
+      if (value && typeof value === "object") {
+        const out = {};
+        Object.keys(value).sort().forEach((key) => { out[key] = normValue(value[key]); });
+        return out;
+      }
+      return value;
     }
 
-    function targetContexts(secret, type) {
-      const targets = secret.targets && typeof secret.targets === "object" ? secret.targets[type] : undefined;
-      if (targets === undefined) return type === "github" ? ["actions"] : [];
-      if (Array.isArray(targets)) return targets.map(String);
-      if (targets && typeof targets === "object") return Object.keys(targets).filter((name) => targets[name] === true);
+    function sameScopeValue(a, b) {
+      return JSON.stringify(normValue(a)) === JSON.stringify(normValue(b));
+    }
+
+    // Targets normalized to an explicit { type: [contexts] } map using the
+    // same built-in default the config layer applies (github → actions).
+    function normalizedTargets(fields) {
+      const normalized = {};
+      Object.keys(view.provider_contexts || {}).forEach((type) => {
+        normalized[type] = targetsChecked(fields, type);
+      });
+      return normalized;
+    }
+
+    // The YAML-level value for a scope field, applying the same built-in
+    // defaults the config layer uses when the key is absent.
+    function yamlFieldDefault(entry, key) {
+      const yaml = entry.yaml || {};
+      if (key === "targets") return normalizedTargets(yaml);
+      if (yaml[key] !== undefined) return yaml[key];
+      if (key === "exclude_repositories" && yaml.exclude_repos !== undefined) return yaml.exclude_repos;
+      if (key === "visibility") return "public";
+      if (key === "sources") return ["all"];
+      return undefined;
+    }
+
+    // Effective draft state for a scope field: draft overlay, then saved
+    // overlay (via yaml merge order), then the YAML/built-in value.
+    function effectiveFields(entry) {
+      const name = (entry.config || {}).name;
+      const overlay = (draft.token_defaults || {})[name] || {};
+      return Object.assign({}, entry.yaml || {}, overlay);
+    }
+
+    function setTokenDefaultField(entry, key, value) {
+      const name = entry.config.name;
+      const defaults = draft.token_defaults = draft.token_defaults || {};
+      const fields = defaults[name] = defaults[name] || {};
+      if (value === undefined || sameScopeValue(yamlFieldDefault(entry, key), value)) delete fields[key];
+      else fields[key] = value;
+      if (Object.keys(fields).length === 0) delete defaults[name];
+      markChanged();
+    }
+
+    function resetTokenDefaults(name) {
+      if (draft.token_defaults) delete draft.token_defaults[name];
+      markChanged();
+      renderTokens();
+    }
+
+    function applyPreset(tokenName, presetName) {
+      const fields = (draft.token_presets || {})[presetName];
+      if (!fields) return;
+      const defaults = draft.token_defaults = draft.token_defaults || {};
+      defaults[tokenName] = Object.assign({}, defaults[tokenName] || {}, copy(fields));
+      markChanged();
+      renderTokens();
+    }
+
+    function sourcesChecked(fields) {
+      const raw = fields.sources;
+      if (raw === undefined || raw === null) return { all: true, ids: [] };
+      const list = (Array.isArray(raw) ? raw : [raw]).map(String);
+      if (list.length === 0 || list.includes("all")) return { all: true, ids: [] };
+      return { all: false, ids: list };
+    }
+
+    function targetsChecked(fields, type) {
+      const targets = fields.targets;
+      if (targets === undefined || targets === null) return type === "github" ? ["actions"] : [];
+      const raw = targets[type];
+      if (raw === undefined || raw === null) return type === "github" ? ["actions"] : [];
+      if (Array.isArray(raw)) return raw.map(String);
+      if (raw && typeof raw === "object") return Object.keys(raw).filter((name) => raw[name] === true);
       return [];
     }
 
-    function targetsText(secret) {
-      const parts = Object.keys(view.provider_contexts).map((type) => {
-        const contexts = targetContexts(secret, type);
-        return contexts.length ? `${type}: ${contexts.join(", ")}` : `${type}: none`;
-      });
-      return parts.join(" · ") || "none";
+    function exclusionsText(fields) {
+      const raw = fields.exclude_repositories;
+      if (raw === undefined || raw === null) return "";
+      if (Array.isArray(raw)) return raw.join(", ");
+      if (typeof raw === "string") return raw;
+      if (raw && typeof raw === "object") {
+        return Object.entries(raw).map(([source, patterns]) => `${source}: ${[].concat(patterns).join(", ")}`).join("; ");
+      }
+      return "";
     }
 
-    function exclusionText(secret) {
-      const parts = [];
-      const sources = Array.isArray(secret.exclude_sources) ? secret.exclude_sources.map(String) : [];
-      if (sources.length) parts.push(`sources: ${sources.join(", ")}`);
-      const repos = secret.exclude_repositories || secret.exclude_repos;
-      if (Array.isArray(repos) && repos.length) parts.push(`repositories: ${repos.join(", ")}`);
-      if (repos && typeof repos === "object" && !Array.isArray(repos)) {
-        Object.entries(repos).forEach(([source, patterns]) => parts.push(`${source}: ${[].concat(patterns).join(", ")}`));
-      }
-      return parts.join(" · ");
+    // Shared editor for the four overridable scope fields, used by token
+    // cards and preset cards. setField(key, value) receives undefined to
+    // clear a field.
+    function scopeEditor(fields, setField, overriddenKeys) {
+      const wrap = element("div", "field-grid");
+      const overridden = overriddenKeys || {};
+
+      const visField = element("div", "field");
+      const visLabel = element("span", "field-label", "Visibility");
+      if (overridden.visibility) visLabel.append(element("span", "override-tag", "override"));
+      visField.append(visLabel);
+      const visSelect = document.createElement("select");
+      ["public", "private", "all"].forEach((value) => {
+        const option = element("option", "", value);
+        option.value = value;
+        option.selected = (fields.visibility || "public") === value;
+        visSelect.append(option);
+      });
+      visSelect.addEventListener("change", () => setField("visibility", visSelect.value));
+      visField.append(visSelect);
+      wrap.append(visField);
+
+      const srcField = element("div", "field");
+      const srcLabel = element("span", "field-label", "Sources");
+      if (overridden.sources) srcLabel.append(element("span", "override-tag", "override"));
+      srcField.append(srcLabel);
+      const checked = sourcesChecked(fields);
+      const row = element("div", "check-row");
+      // "All" writes ["all"]; unchecking it materializes every configured
+      // source as an explicit selection so individual boxes can be
+      // deselected. Presets may name sources that no longer exist — those
+      // render as deselectable "(not configured)" rows.
+      const sourceIds = (view.sources || []).map((source) => source.id);
+      const allLabel = element("label", "");
+      const allBox = document.createElement("input");
+      allBox.type = "checkbox";
+      allBox.checked = checked.all;
+      allLabel.append(allBox, document.createTextNode("All configured sources"));
+      allBox.addEventListener("change", () => {
+        setField("sources", allBox.checked ? ["all"] : sourceIds.slice());
+      });
+      row.append(allLabel);
+      const listed = checked.all ? sourceIds.slice() : checked.ids;
+      sourceIds.concat(listed.filter((id) => !sourceIds.includes(id))).forEach((sourceId) => {
+        const label = element("label", "");
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = listed.includes(sourceId);
+        box.disabled = checked.all;
+        const known = sourceIds.includes(sourceId);
+        label.append(box, document.createTextNode(known ? sourceId : `${sourceId} (not configured)`));
+        box.addEventListener("change", () => {
+          const ids = box.checked
+            ? listed.concat([sourceId])
+            : listed.filter((id) => id !== sourceId);
+          setField("sources", ids.length ? ids : ["all"]);
+        });
+        row.append(label);
+      });
+      srcField.append(row);
+      srcField.append(element("span", "scope-note", checked.all
+        ? "Applies to all configured sources."
+        : "Deselecting every source applies to all sources."));
+      wrap.append(srcField);
+
+      const tgtField = element("div", "field");
+      const tgtLabel = element("span", "field-label", "Targets");
+      if (overridden.targets) tgtLabel.append(element("span", "override-tag", "override"));
+      tgtField.append(tgtLabel);
+      Object.keys(view.provider_contexts || {}).forEach((type) => {
+        const contexts = view.provider_contexts[type] || [];
+        const selected = targetsChecked(fields, type);
+        const typeRow = element("div", "check-row");
+        contexts.forEach((context) => {
+          const label = element("label", "");
+          const box = document.createElement("input");
+          box.type = "checkbox";
+          box.checked = selected.includes(context);
+          label.append(box, document.createTextNode(`${type}: ${context}`));
+          box.addEventListener("change", () => {
+            const targets = normalizedTargets(fields);
+            targets[type] = box.checked
+              ? selected.concat([context]).filter((v, i, a) => a.indexOf(v) === i)
+              : selected.filter((name) => name !== context);
+            setField("targets", targets);
+          });
+          typeRow.append(label);
+        });
+        if (contexts.length === 0) typeRow.append(element("span", "scope-note", `${type}: no contexts`));
+        tgtField.append(typeRow);
+      });
+      wrap.append(tgtField);
+
+      const exField = element("div", "field");
+      const exLabel = element("span", "field-label", "Exclude repositories");
+      if (overridden.exclude_repositories) exLabel.append(element("span", "override-tag", "override"));
+      exField.append(exLabel);
+      const exInput = element("input", "");
+      exInput.type = "text";
+      exInput.placeholder = "owner/repo, owner/other…";
+      exInput.value = exclusionsText(fields);
+      exInput.addEventListener("change", () => {
+        const list = exInput.value.split(",").map((part) => part.trim()).filter(Boolean);
+        setField("exclude_repositories", list.length ? list : undefined);
+      });
+      exField.append(exInput);
+      wrap.append(exField);
+
+      return wrap;
     }
 
     function renderTokens() {
       const container = document.getElementById("tokens");
       container.replaceChildren();
+      const presetNames = Object.keys(draft.token_presets || {});
       view.secrets.forEach((entry) => {
         const secret = entry.config || {};
         const card = element("article", "token-card");
@@ -379,20 +614,175 @@
         title.append(element("span", `status-pill ${pill.css}`, pill.label));
         card.append(title);
 
+        const overrides = (draft.token_defaults || {})[secret.name] || {};
+        if (Object.keys(overrides).length) {
+          const note = element("p", "small muted");
+          note.append(element("span", "override-tag", "rules-file defaults"));
+          note.append(document.createTextNode(" These fields override the YAML defaults; the YAML file is unchanged."));
+          const reset = element("button", "orphan-remove", "Reset to YAML defaults");
+          reset.addEventListener("click", () => resetTokenDefaults(secret.name));
+          note.append(reset);
+          card.append(note);
+        }
+
+        if (presetNames.length) {
+          const presetRow = element("p", "small");
+          presetRow.append(element("span", "field-label", "Apply preset: "));
+          const select = document.createElement("select");
+          const placeholder = element("option", "", "choose a preset…");
+          placeholder.value = "";
+          select.append(placeholder);
+          presetNames.forEach((presetName) => {
+            const option = element("option", "", presetName);
+            option.value = presetName;
+            select.append(option);
+          });
+          select.addEventListener("change", () => applyPreset(secret.name, select.value));
+          presetRow.append(select);
+          card.append(presetRow);
+        }
+
         const fields = element("div", "field-grid");
         readOnlyField(fields, "Value environment variable", secret.value_env || secret.name);
         readOnlyField(fields, "Version", secret.version || "1");
         readOnlyField(fields, "Version time", secret.version_at || secret.updated_at || "unset");
-        readOnlyField(fields, "Visibility", secret.visibility || "public");
-        readOnlyField(fields, "Source scope", sourceScopeText(secret));
-        readOnlyField(fields, "Targets", targetsText(secret));
-        const exclusions = exclusionText(secret);
-        if (exclusions) readOnlyField(fields, "Exclusions", exclusions);
+        const excludedSources = Array.isArray(secret.exclude_sources) ? secret.exclude_sources.join(", ") : "";
+        if (excludedSources) readOnlyField(fields, "Excluded sources (YAML, always wins)", excludedSources);
         card.append(fields);
+
+        card.append(scopeEditor(
+          effectiveFields(entry),
+          (key, value) => { setTokenDefaultField(entry, key, value); renderTokens(); },
+          overrides
+        ));
         container.append(card);
       });
       if (view.secrets.length === 0) {
         container.append(element("p", "empty", "No token definitions. Add secrets to the YAML config file."));
+      }
+    }
+
+    // ---- presets -----------------------------------------------------
+    // Presets live in their own files, one per type: token presets hold
+    // scope fields, repo presets hold token => rule bundles with an
+    // optional "*" catch-all. Applying stamps a copy into the rules
+    // file's draft sections.
+
+    function setPresetField(group, name, key, value) {
+      const presets = draft[group] = draft[group] || {};
+      const fields = presets[name] = presets[name] || {};
+      if (value === undefined) delete fields[key];
+      else fields[key] = value;
+      markChanged();
+    }
+
+    function renamePreset(group, oldName, input) {
+      const newName = input.value.trim();
+      if (!newName || newName === oldName) {
+        renderPresets();
+        return;
+      }
+      if ((draft[group] || {})[newName]) {
+        setMessage(`A preset named "${newName}" already exists.`, "error");
+        renderPresets();
+        return;
+      }
+      draft[group][newName] = draft[group][oldName];
+      delete draft[group][oldName];
+      markChanged();
+      renderPresets();
+      renderTokens();
+    }
+
+    function deletePreset(group, name) {
+      if (draft[group]) delete draft[group][name];
+      markChanged();
+      renderPresets();
+      renderTokens();
+    }
+
+    function addPreset(group) {
+      const presets = draft[group] = draft[group] || {};
+      let name = "new-preset";
+      let counter = 2;
+      while (presets[name]) name = `new-preset-${counter++}`;
+      presets[name] = group === "token_presets"
+        ? { visibility: "public", sources: ["all"], targets: normalizedTargets({}) }
+        : {};
+      markChanged();
+      renderPresets();
+      renderTokens();
+    }
+
+    function presetCardHead(group, name) {
+      const head = element("div", "preset-head");
+      const nameInput = element("input", "preset-name");
+      nameInput.type = "text";
+      nameInput.value = name;
+      nameInput.setAttribute("aria-label", "Preset name");
+      nameInput.addEventListener("change", () => renamePreset(group, name, nameInput));
+      head.append(nameInput);
+      const remove = element("button", "orphan-remove", "Delete preset");
+      remove.addEventListener("click", () => deletePreset(group, name));
+      head.append(remove);
+      return head;
+    }
+
+    // Repo preset rows: a rule select per configured token plus the "*"
+    // catch-all stamped onto every token the preset does not name.
+    function repoPresetEditor(name, fields) {
+      const wrap = element("div", "");
+      const tokenNames = view.secrets.map((entry) => (entry.config || {}).name).filter(Boolean);
+      [["*", "All unlisted tokens"]].concat(tokenNames.map((token) => [token, token])).forEach(([key, label]) => {
+        const row = element("div", "assignment-row");
+        row.append(element("strong", "", label));
+        const select = document.createElement("select");
+        [
+          ["", "Not part of this preset"],
+          ["default", "Use token defaults"],
+          ["include", "Assign to the repository"],
+          ["exclude", "Do not assign to the repository"]
+        ].forEach(([value, text]) => {
+          const option = element("option", "", text);
+          option.value = value;
+          option.selected = (fields[key] || "") === value;
+          select.append(option);
+        });
+        select.addEventListener("change", () => {
+          setPresetField("repo_presets", name, key, select.value === "" ? undefined : select.value);
+        });
+        row.append(select);
+        wrap.append(row);
+      });
+      if (tokenNames.length === 0) {
+        wrap.append(element("p", "scope-note", "No tokens are configured yet; the catch-all can still be set."));
+      }
+      return wrap;
+    }
+
+    function renderPresets() {
+      const tokenContainer = document.getElementById("token-presets");
+      tokenContainer.replaceChildren();
+      Object.entries(draft.token_presets || {}).forEach(([name, fields]) => {
+        const card = element("article", "token-card");
+        card.append(presetCardHead("token_presets", name));
+        card.append(scopeEditor(fields, (key, value) => { setPresetField("token_presets", name, key, value); }));
+        tokenContainer.append(card);
+      });
+      if (Object.keys(draft.token_presets || {}).length === 0) {
+        tokenContainer.append(element("p", "empty", "No token presets yet. New token preset creates a reusable scope template."));
+      }
+
+      const repoContainer = document.getElementById("repo-presets");
+      repoContainer.replaceChildren();
+      Object.entries(draft.repo_presets || {}).forEach(([name, fields]) => {
+        const card = element("article", "token-card");
+        card.append(presetCardHead("repo_presets", name));
+        card.append(repoPresetEditor(name, fields));
+        repoContainer.append(card);
+      });
+      if (Object.keys(draft.repo_presets || {}).length === 0) {
+        repoContainer.append(element("p", "empty", "No repository presets yet. New repository preset creates a reusable rule bundle."));
       }
     }
 
@@ -430,11 +820,11 @@
     }
 
     function removeOrphan(orphan) {
-      const sourceRules = draft[orphan.source];
+      const sourceRules = (draft.rules || {})[orphan.source];
       if (!sourceRules || !sourceRules[orphan.repository]) return;
       delete sourceRules[orphan.repository][orphan.secret];
       if (Object.keys(sourceRules[orphan.repository]).length === 0) delete sourceRules[orphan.repository];
-      if (Object.keys(sourceRules).length === 0) delete draft[orphan.source];
+      if (Object.keys(sourceRules).length === 0) delete (draft.rules || {})[orphan.source];
       markChanged();
     }
 
@@ -546,18 +936,35 @@
       return row;
     }
 
+    // A repo preset stamps its token => rule entries onto the repo's
+    // draft rules; the "*" catch-all applies to every configured token
+    // the preset does not name. Tokens locked by exclude_sources are
+    // skipped — no rule can cross that boundary anyway.
+    function applyRepoPreset(sourceId, repo, presetName) {
+      const fields = (draft.repo_presets || {})[presetName];
+      if (!fields) return;
+      const locked = repo.locked_sources || {};
+      view.secrets.forEach((entry) => {
+        const name = (entry.config || {}).name;
+        if (!name || locked[name] === true) return;
+        const mode = fields[name] !== undefined ? fields[name] : fields["*"];
+        if (mode !== undefined) changeRepositoryRule(sourceId, repo, name, mode);
+      });
+    }
+
     // "Use token defaults" deletes a JSON override only when there is no
     // YAML intent underneath; against a YAML rule or exclusion it writes
     // an explicit "default" that cancels it (see rule provenance).
     function changeRepositoryRule(sourceId, repo, secretName, mode) {
-      const sourceRules = draft[sourceId] = draft[sourceId] || {};
+      const rules = draft.rules = draft.rules || {};
+      const sourceRules = rules[sourceId] = rules[sourceId] || {};
       const repoRules = sourceRules[repo.name] = sourceRules[repo.name] || {};
       const provenance = repo.rule_sources[secretName];
       const legacy = repo.legacy_exclusions[secretName] === true;
       if (mode === "default" && provenance !== "yaml" && !legacy) delete repoRules[secretName];
       else repoRules[secretName] = mode;
       if (Object.keys(repoRules).length === 0) delete sourceRules[repo.name];
-      if (Object.keys(sourceRules).length === 0) delete draft[sourceId];
+      if (Object.keys(sourceRules).length === 0) delete rules[sourceId];
       markChanged();
     }
 
@@ -623,6 +1030,26 @@
           const rules = element("details", "repo-rule-list");
           const summary = element("summary", "", "Repository-specific token rules");
           rules.append(summary);
+          const repoPresetNames = Object.keys(draft.repo_presets || {});
+          if (repoPresetNames.length) {
+            const presetRow = element("p", "small");
+            presetRow.append(element("span", "field-label", "Apply preset: "));
+            const presetSelect = document.createElement("select");
+            const placeholder = element("option", "", "choose a preset…");
+            placeholder.value = "";
+            presetSelect.append(placeholder);
+            repoPresetNames.forEach((presetName) => {
+              const option = element("option", "", presetName);
+              option.value = presetName;
+              presetSelect.append(option);
+            });
+            presetSelect.addEventListener("change", () => {
+              applyRepoPreset(source.id, repo, presetSelect.value);
+              presetSelect.value = "";
+            });
+            presetRow.append(presetSelect);
+            rules.append(presetRow);
+          }
           view.secrets.forEach((entry) => rules.append(repoRuleControl(source, repo, entry.config || {})));
           card.append(rules);
 
@@ -678,16 +1105,22 @@
       const viewSequence = ++issuedSequence;
       const submitted = copy(draft);
       try {
-        const result = await post("/api/save", { revision: view.revision, rules: submitted });
+        const result = await post("/api/save", {
+          revision: view.revision,
+          rules: submitted.rules || {},
+          token_defaults: submitted.token_defaults || {},
+          token_presets: submitted.token_presets || {},
+          repo_presets: submitted.repo_presets || {}
+        });
         appliedSequence = Math.max(appliedSequence, viewSequence);
         if (JSON.stringify(draft) === JSON.stringify(submitted)) {
           acceptView(result, { applyRules: true });
-          setMessage("Rules saved locally. No provider secrets were changed.", "success");
+          setMessage("Saved locally. No provider secrets were changed.", "success");
         } else {
           // Edits made during the save are kept; only the read-only data
           // refreshes, and a new preview validates the merged draft.
           acceptView(result, { applyRules: false });
-          baseline = copy(result.rules || {});
+          baseline = viewSections(result);
           // markChanged schedules the revalidation preview; the save outcome
           // must be reported after it so the "checking" status does not
           // overwrite it.
@@ -771,6 +1204,8 @@
 
     document.getElementById("cancel").addEventListener("click", cancelChanges);
     document.getElementById("save").addEventListener("click", saveChanges);
+    document.getElementById("add-token-preset").addEventListener("click", () => addPreset("token_presets"));
+    document.getElementById("add-repo-preset").addEventListener("click", () => addPreset("repo_presets"));
     document.getElementById("refresh-inventory").addEventListener("click", refreshInventory);
     document.getElementById("repo-filter").addEventListener("input", renderRepositories);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) pollData(); });

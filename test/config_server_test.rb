@@ -30,12 +30,22 @@ class ConfigServerTest < Minitest::Test
       assert_includes page_body.join, "Cancel changes"
       assert_equal 200, data_status
       refute data.fetch("check_for_updates")
+      assert_equal({}, data.fetch("rules"))
+      assert_equal({}, data.fetch("token_presets"))
+      assert_equal({}, data.fetch("repo_presets"))
+      assert_equal(
+        { "repos" => "presets-repos.json", "tokens" => "presets-tokens.json" },
+        data.fetch("preset_files").sort.to_h
+      )
       refute_includes data_body.join, "very-secret-value-should-not-appear"
       refute_nil token
 
       payload = JSON.generate(
         "revision" => data.fetch("revision"),
-        "rules" => { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "include" } } }
+        "rules" => { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "include" } } },
+        "token_defaults" => {},
+        "token_presets" => {},
+        "repo_presets" => {}
       )
       config_before = File.read(config_path)
       missing_token = call(app, "POST", "/api/preview", body: payload, origin: "http://127.0.0.1:8043")
@@ -212,7 +222,46 @@ class ConfigServerTest < Minitest::Test
       })().catch((error) => { console.error(error); process.exit(1); });
     JAVASCRIPT
 
-    assert_includes stdout, "Rules saved locally" if stdout
+    assert_includes stdout, "Saved locally" if stdout
+  end
+
+  def test_ui_repo_preset_stamps_rules_with_catchall_and_lock_handling
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_repo_preset_stamping(script) }
+      (async () => {
+        const initial = view("initial");
+        initial.secrets = [
+          { config: { name: "A_TOKEN" } },
+          { config: { name: "B_TOKEN" } },
+          { config: { name: "C_TOKEN" } },
+          { config: { name: "D_TOKEN" } },
+          { config: { name: "E_TOKEN" } }
+        ];
+        initial.repo_presets = {
+          lockdown: { A_TOKEN: "include", C_TOKEN: "default", D_TOKEN: "default", E_TOKEN: "exclude", "*": "exclude" }
+        };
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        const repo = {
+          name: "example/repo",
+          rule_sources: { C_TOKEN: "yaml" },
+          legacy_exclusions: {},
+          locked_sources: { E_TOKEN: true }
+        };
+        sandbox.applyRepoPreset("src", repo, "lockdown");
+        const save = elements.get("save")._handlers.click();
+        pending[1]({ ok: true, status: 200, json: async () => view("saved") });
+        await save;
+        const body = bodies[requests.indexOf("/api/save")];
+        process.stdout.write(JSON.stringify(body.rules));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    assert_equal(
+      { "src" => { "example/repo" => { "A_TOKEN" => "include", "B_TOKEN" => "exclude", "C_TOKEN" => "default" } } },
+      JSON.parse(stdout)
+    )
   end
 
   def test_rack_app_rejects_untrusted_host_and_remote_addresses
@@ -238,6 +287,7 @@ class ConfigServerTest < Minitest::Test
       const vm = require("vm");
       const pending = [];
       const requests = [];
+      const bodies = [];
       const elements = new Map();
       const node = () => ({
         textContent: "", value: "", className: "", disabled: false, hidden: true, style: {},
@@ -260,8 +310,9 @@ class ConfigServerTest < Minitest::Test
       const sandbox = {
         document,
         window,
-        fetch(path) {
+        fetch(path, options) {
           requests.push(path);
+          bodies.push(options && options.body ? JSON.parse(options.body) : null);
           return new Promise((resolve) => pending.push(resolve));
         },
         setInterval(callback) { sandbox.poll = callback; return 1; },
@@ -272,6 +323,7 @@ class ConfigServerTest < Minitest::Test
       const view = (name, checkForUpdates = false) => ({
         csrf: "test-csrf", config_file: `${name}.yml`, rules_file: "rules.json",
         revision: name, display_revision: name, generated_at: null, rules: {},
+        token_defaults: {}, token_presets: {}, repo_presets: {},
         check_for_updates: checkForUpdates,
         secrets: [], sources: [], orphan_rules: [], unimported_env_names: [],
         ignored_env_names: [], action_summary: {}, provider_contexts: {},
@@ -339,6 +391,14 @@ class ConfigServerTest < Minitest::Test
     assert_match(/status === 403/, post)
     assert_includes post, "refreshCsrfToken"
     assert_includes post, "return post(path, body)"
+  end
+
+  def assert_repo_preset_stamping(script)
+    apply = script[/function applyRepoPreset\(sourceId, repo, presetName\) \{.*?\n    \}/m]
+
+    assert(apply)
+    assert_includes apply, 'fields["*"]'
+    assert_includes apply, "locked_sources"
   end
 
   def call(app, method, path, body: nil, origin: nil, token: nil, host: "127.0.0.1:8043", remote_address: "127.0.0.1")

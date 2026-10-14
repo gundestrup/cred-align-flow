@@ -330,6 +330,124 @@ class ConfigTest < Minitest::Test
     end
   end
 
+  def test_token_defaults_overlay_replaces_yaml_scope_fields
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      rules_path = CredAlignFlow::Rules.default_path_for(path)
+      File.write(path, YAML.dump(
+                         "version" => 1,
+                         "sources" => { "github-main" => { "type" => "github", "owner" => "example" } },
+                         "secrets" => [{
+                           "name" => "SONAR_TOKEN",
+                           "visibility" => "public",
+                           "sources" => ["github-main"],
+                           "targets" => { "github" => ["actions"] },
+                           "exclude_repos" => ["legacy/repo"]
+                         }]
+                       ))
+      File.write(rules_path, JSON.generate(
+                               "version" => 2,
+                               "rules" => {},
+                               "token_defaults" => {
+                                 "SONAR_TOKEN" => {
+                                   "visibility" => "all",
+                                   "targets" => { "github" => %w[actions dependabot] },
+                                   "exclude_repositories" => ["example/repo"]
+                                 }
+                               }
+                             ))
+
+      config = CredAlignFlow::Config.new(path)
+      secret = config.secrets.first
+
+      assert_equal "all", config.secret_visibility(secret)
+      assert_equal %w[actions dependabot], config.contexts_for(secret, "github-main")
+      assert_equal ["example/repo"], config.secret_exclusions(secret, "github-main")
+      assert_equal ["legacy/repo"], config.raw_secrets.first.fetch("exclude_repos")
+      refute config.secrets.first.key?("exclude_repos")
+      assert_equal "all", config.token_default_overlay(secret).fetch("visibility")
+    end
+  end
+
+  def test_token_defaults_keep_unset_yaml_fields_and_hard_locks
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      rules_path = CredAlignFlow::Rules.default_path_for(path)
+      File.write(path, YAML.dump(
+                         "version" => 1,
+                         "sources" => {
+                           "github-main" => {
+                             "type" => "github", "owner" => "example", "auth_env" => "GITHUB_MAIN_TOKEN"
+                           },
+                           "github-alt" => {
+                             "type" => "github", "owner" => "other", "auth_env" => "GITHUB_ALT_TOKEN"
+                           }
+                         },
+                         "secrets" => [{
+                           "name" => "SONAR_TOKEN",
+                           "sources" => ["github-main"],
+                           "exclude_sources" => ["github-alt"]
+                         }]
+                       ))
+      File.write(rules_path, JSON.generate(
+                               "version" => 2,
+                               "rules" => {},
+                               "token_defaults" => { "SONAR_TOKEN" => { "sources" => %w[github-main github-alt] } }
+                             ))
+
+      config = CredAlignFlow::Config.new(path)
+      secret = config.secrets.first
+
+      assert config.secret_source_selected_by_default?(secret, "github-alt")
+      refute config.secret_applies_to_source?(secret, "github-alt")
+      assignment, = config.secret_assignment(secret, "github-alt", { "nameWithOwner" => "other/repo" })
+
+      assert_equal "excluded_manual", assignment
+    end
+  end
+
+  def test_rejects_token_defaults_for_unknown_tokens
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      rules_path = CredAlignFlow::Rules.default_path_for(path)
+      File.write(path, YAML.dump(
+                         "version" => 1,
+                         "sources" => { "github-main" => { "type" => "github", "owner" => "example" } },
+                         "secrets" => [{ "name" => "SONAR_TOKEN" }]
+                       ))
+      File.write(rules_path, JSON.generate(
+                               "version" => 2,
+                               "rules" => {},
+                               "token_defaults" => { "GONE_TOKEN" => { "visibility" => "all" } }
+                             ))
+
+      error = assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+
+      assert_includes error.message, "unknown tokens"
+    end
+  end
+
+  def test_rejects_invalid_token_default_values_with_overlay_context
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      rules_path = CredAlignFlow::Rules.default_path_for(path)
+      File.write(path, YAML.dump(
+                         "version" => 1,
+                         "sources" => { "github-main" => { "type" => "github", "owner" => "example" } },
+                         "secrets" => [{ "name" => "SONAR_TOKEN" }]
+                       ))
+      File.write(rules_path, JSON.generate(
+                               "version" => 2,
+                               "rules" => {},
+                               "token_defaults" => { "SONAR_TOKEN" => { "visibility" => "bogus" } }
+                             ))
+
+      error = assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+
+      assert_includes error.message, "token_defaults"
+    end
+  end
+
   def test_rejects_rules_file_references_to_unknown_tokens
     Dir.mktmpdir do |dir|
       path = File.join(dir, "config.yml")

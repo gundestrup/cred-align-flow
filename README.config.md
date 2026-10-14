@@ -121,17 +121,28 @@ Do not commit real values, private repository names, rules files, local inventor
 
 ### Repository rules file
 
-Per-repository token overrides live in a JSON file that the config UI manages; it is the only file the UI writes. The default path is derived from the config file name — `cred-align.local.yml` uses `cred-align.rules.json` beside it, and a config named `config.yml` uses `rules.json` in the same directory — or set `rules_file:` explicitly in the YAML config.
+UI-managed effective state lives in a JSON file next to the config. The default path is derived from the config file name — `cred-align.local.yml` uses `cred-align.rules.json` beside it, and a config named `config.yml` uses `rules.json` in the same directory — or set `rules_file:` explicitly in the YAML config.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "rules": {
     "github-main": {
       "owner/repo": { "SONAR_TOKEN": "exclude" }
     }
+  },
+  "token_defaults": {
+    "SONAR_TOKEN": { "visibility": "all", "targets": { "github": ["actions", "dependabot"] } }
   }
 }
 ```
 
-Each entry maps `source → owner/repository → secret name → include`, `exclude`, or `default`. `include`/`exclude` override the secret's default `sources`/`visibility` scope for that repository; `default` restores it and cancels a `exclude_repositories` or `repository_rules` match. `exclude_sources` always wins. Rules file entries take precedence over a hand-authored `repository_rules` key for the same repository and token; both CLI commands and the UI resolve the merged result.
+`rules` maps `source → owner/repository → secret name → include`, `exclude`, or `default`. `include`/`exclude` override the secret's default `sources`/`visibility` scope for that repository; `default` restores it and cancels a `exclude_repositories` or `repository_rules` match. `exclude_sources` always wins. Rules file entries take precedence over a hand-authored `repository_rules` key for the same repository and token; both CLI commands and the UI resolve the merged result.
+
+`token_defaults` overrides a secret's default scope per field: `visibility`, `sources`, `targets`, and `exclude_repositories` set here replace the same YAML fields (an overlaid `exclude_repositories` replaces both `exclude_repositories` and `exclude_repos`); fields left unset keep the YAML value. Token identity is never overridable — `name`, `value_env`, digests, versions, `exclude_sources`, and `repository_rules` stay in the YAML.
+
+Files without `token_defaults` stay at `version: 1`, so they remain readable by older builds. A `version: 2` file is rejected by builds that predate the section rather than silently ignoring overrides that change the plan.
+
+### Preset files
+
+The UI also manages two preset-library files beside the rules file, named after it — `cred-align.rules.json` pairs with `cred-align.presets-tokens.json` and `cred-align.presets-repos.json`, while a plain `rules.json` pairs with `presets-tokens.json` and `presets-repos.json`. They hold reusable stamp templates (token scope presets and repo rule bundles) that `plan`/`apply`/`check` never read — see [README.presets.md](README.presets.md).

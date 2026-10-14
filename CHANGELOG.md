@@ -7,6 +7,34 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+### Added
+
+- The config UI can now edit a token's default scope (`visibility`,
+  `sources`, `targets`, `exclude_repositories`). Edits are written to the
+  rules file as `token_defaults` overrides merged over the YAML entry —
+  the hand-edited YAML config stays untouched, and token identity
+  (`name`, `value_env`, digests, versions, `exclude_sources`,
+  `repository_rules`) remains YAML-only.
+- Named presets in two UI-managed library files derived from the rules
+  file path (`*.presets-tokens.json` and `*.presets-repos.json`, or
+  `presets-tokens.json`/`presets-repos.json` for a `rules.json`). Token
+  presets are scope templates the UI stamps into `token_defaults`; repo
+  presets are `token → include|exclude|default` bundles with a `*`
+  catch-all that the UI stamps onto a repository's `rules` entries.
+  Presets are inert — `plan`/`apply`/`check` never read the preset
+  files; stamping copies values into the rules file. The preset files
+  are gitignored like the rules file.
+- Rules file schema `version: 2`. Files without `token_defaults` are
+  still written as `version: 1`, so they stay readable by older builds;
+  version 2 files fail closed on older builds instead of silently
+  ignoring overrides that change the plan.
+
+### Changed
+
+- The UI save/preview payload now carries `rules`, `token_defaults`,
+  `token_presets`, and `repo_presets` together; every save revalidates
+  the merged configuration and the preset files' references.
+
 ## [0.0.4] - 2026-10-13
 
 ### Changed

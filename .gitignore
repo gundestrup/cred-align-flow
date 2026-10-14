@@ -6,6 +6,7 @@
 *.local.yml
 *.local.yaml
 *.rules.json
+*presets-*.json
 secrets.yml
 secrets.yaml
 secrets.env
@@ -13,6 +14,7 @@ secrets.env
 /config/
 .cred-align-flow-config-*.tmp
 .cred-align-flow-rules-*.tmp
+*presets-*.json-*.tmp
 .itsi.pid
 tmp/
 coverage/

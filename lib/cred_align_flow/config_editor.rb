@@ -6,26 +6,33 @@ require "securerandom"
 require "yaml"
 
 module CredAlignFlow
-  # Backend for the local config UI. The only file it writes is the rules
-  # file (per-repository token overrides); the YAML config is read-only here
-  # and stays hand-edited. Inventory refresh updates the state file through
-  # read-only provider calls.
+  # Backend for the local config UI. It writes the rules file
+  # (per-repository token overrides and token default-scope overrides)
+  # and the two sibling preset-library files the UI stamps from. The YAML
+  # config is read-only here and stays hand-edited. Inventory refresh
+  # updates the state file through read-only provider calls.
   #
-  # Two revisions are reported: `revision` guards rules-file writes (the
-  # files a save depends on) and `display_revision` additionally covers the
-  # env inputs that feed availability/digest status, so the page notices
-  # value rotation. The display revision is HMAC'd with a per-process key:
-  # an unkeyed digest of secret material would be a guessing oracle.
+  # Two revisions are reported: `revision` guards writes to the
+  # UI-managed files (the files a save depends on) and `display_revision`
+  # additionally covers the env inputs that feed availability/digest
+  # status, so the page notices value rotation. The display revision is
+  # HMAC'd with a per-process key: an unkeyed digest of secret material
+  # would be a guessing oracle.
   class ConfigEditor
     class RevisionConflict < Error; end
 
-    Inputs = Struct.new(:config_bytes, :rules_bytes, :state_bytes, :env_bytes) do
+    SAVE_KEYS = %w[revision rules token_defaults token_presets repo_presets].freeze
+
+    Inputs = Struct.new(:config_bytes, :rules_bytes, :token_presets_bytes, :repo_presets_bytes,
+                        :state_bytes, :env_bytes) do
       def revision
-        Digest::SHA256.hexdigest([config_bytes, rules_bytes, state_bytes].join("\0"))
+        Digest::SHA256.hexdigest(
+          [config_bytes, rules_bytes, token_presets_bytes, repo_presets_bytes, state_bytes].join("\0")
+        )
       end
     end
 
-    attr_reader :config_path, :env_path, :state_path, :rules_path
+    attr_reader :config_path, :env_path, :state_path, :rules_path, :token_presets_path, :repo_presets_path
 
     def initialize(config_path:, env_path:, state_path:, providers: {})
       @config_path = File.expand_path(config_path)
@@ -33,6 +40,8 @@ module CredAlignFlow
       @state_path = File.expand_path(state_path)
       config = Config.new(@config_path)
       @rules_path = config.rules_file
+      @token_presets_path = PresetLibrary.path_for(@rules_path, :tokens)
+      @repo_presets_path = PresetLibrary.path_for(@rules_path, :repos)
       @providers = providers
       @revision_key = SecureRandom.hex(32)
       validate_path_roles!(config)
@@ -57,23 +66,27 @@ module CredAlignFlow
     end
 
     def preview(payload)
-      verify_payload!(payload, %w[revision rules])
+      verify_payload!(payload, SAVE_KEYS)
       inputs = read_inputs
       verify_revision!(payload.fetch("revision"), inputs)
-      rules = candidate_rules(payload.fetch("rules"), inputs.config_bytes)
-      config = Config.new(@config_path, data: parse_config(inputs.config_bytes), rules: rules)
-      build_view(config, State.new(@state_path), Dotenv.load(@env_path), inputs)
+      config, = candidate_config(payload, inputs.config_bytes)
+      libraries = candidate_libraries(payload, config)
+      build_view(config, State.new(@state_path), Dotenv.load(@env_path), inputs, libraries)
     end
 
     # Check-and-save runs under the rules lockfile so another writer cannot
-    # change the file between the revision check and the atomic replace.
+    # change the UI-managed files between the revision check and the
+    # atomic replaces. Presets land first: an interrupted save can leave
+    # an unused library update, never a rules state missing its inputs.
     def save(payload)
-      verify_payload!(payload, %w[revision rules])
-      ensure_writable_rules!
+      verify_payload!(payload, SAVE_KEYS)
+      ensure_writable_targets!
       AtomicFile.with_lock(@rules_path) do
         inputs = read_inputs
         verify_revision!(payload.fetch("revision"), inputs)
-        rules = candidate_rules(payload.fetch("rules"), inputs.config_bytes)
+        config, rules = candidate_config(payload, inputs.config_bytes)
+        libraries = candidate_libraries(payload, config)
+        libraries.each_value { |library| library.save! unless library.skippable_save? }
         rules.save!
       end
       data
@@ -95,10 +108,16 @@ module CredAlignFlow
     def read_inputs
       Inputs.new(
         File.binread(@config_path),
-        File.exist?(@rules_path) ? File.binread(@rules_path) : "",
-        File.exist?(@state_path) ? File.binread(@state_path) : "",
-        File.exist?(@env_path) ? File.binread(@env_path) : ""
+        read_bytes(@rules_path),
+        read_bytes(@token_presets_path),
+        read_bytes(@repo_presets_path),
+        read_bytes(@state_path),
+        read_bytes(@env_path)
       )
+    end
+
+    def read_bytes(path)
+      File.exist?(path) ? File.binread(path) : ""
     end
 
     def display_revision(inputs)
@@ -117,10 +136,45 @@ module CredAlignFlow
       raise RevisionConflict, "inputs changed since this page was loaded; reload before saving"
     end
 
-    def candidate_rules(payload_rules, config_bytes)
-      rules = Rules.new(@rules_path, data: { "version" => 1, "rules" => payload_rules })
-      Config.new(@config_path, data: parse_config(config_bytes), rules: rules)
-      rules
+    # The candidate document is schema v2; Rules normalizes the stored
+    # version back to 1 when no token_defaults are present, so rules-only
+    # files stay readable by older builds.
+    def candidate_config(payload, config_bytes)
+      rules = Rules.new(
+        @rules_path,
+        data: {
+          "version" => 2,
+          "rules" => payload.fetch("rules"),
+          "token_defaults" => payload.fetch("token_defaults")
+        }
+      )
+      [Config.new(@config_path, data: parse_config(config_bytes), rules: rules), rules]
+    end
+
+    # Candidate preset libraries, reference-checked against the candidate
+    # config so a save cannot persist a preset that stamps broken state.
+    def candidate_libraries(payload, config)
+      libraries = {
+        "tokens" => PresetLibrary.new(
+          @token_presets_path,
+          type: :tokens,
+          data: { "version" => PresetLibrary::VERSION, "presets" => payload.fetch("token_presets") }
+        ),
+        "repos" => PresetLibrary.new(
+          @repo_presets_path,
+          type: :repos,
+          data: { "version" => PresetLibrary::VERSION, "presets" => payload.fetch("repo_presets") }
+        )
+      }
+      libraries.each_value { |library| library.validate_references!(config) }
+      libraries
+    end
+
+    def preset_libraries
+      {
+        "tokens" => PresetLibrary.new(@token_presets_path, type: :tokens),
+        "repos" => PresetLibrary.new(@repo_presets_path, type: :repos)
+      }
     end
 
     def build_config(config_bytes)
@@ -136,7 +190,7 @@ module CredAlignFlow
       raise ConfigError, "Invalid config YAML: #{e.message}"
     end
 
-    def build_view(config, state, env_values, inputs)
+    def build_view(config, state, env_values, inputs, libraries = preset_libraries)
       scaffolder = begin
         Scaffolder.new(@config_path)
       rescue ConfigError
@@ -148,7 +202,8 @@ module CredAlignFlow
         env_values: env_values,
         revision: inputs.revision,
         display_revision: display_revision(inputs),
-        scaffolder: scaffolder
+        scaffolder: scaffolder,
+        presets: libraries
       ).to_h
     end
 
@@ -157,10 +212,12 @@ module CredAlignFlow
       config.validate_runtime_paths!(env_path: @env_path, state_path: @state_path)
     end
 
-    def ensure_writable_rules!
-      return unless File.symlink?(@rules_path)
+    def ensure_writable_targets!
+      [@rules_path, @token_presets_path, @repo_presets_path].each do |path|
+        next unless File.symlink?(path)
 
-      raise ConfigError, "saving through a rules symlink is disabled; pass the target file path directly"
+        raise ConfigError, "saving through a symlink is disabled; pass the target file path directly: #{path}"
+      end
     end
   end
 end

@@ -7,9 +7,12 @@ check_for_updates: false
 update_notice_min_age_days: 7
 state_file: ~/.local/state/cred-align-flow/inventory.json
 # state_file: inventory.json          # keep state inside the config/ dir instead
-# rules_file: cred-align.rules.json   # UI-authored per-repository overrides;
-                                      # defaults to <config-stem>.rules.json
-                                      # (or rules.json when this file is config.yml)
+# rules_file: cred-align.rules.json   # UI-authored state: per-repository rules and
+                                      # token default overrides; defaults to
+                                      # <config-stem>.rules.json (or rules.json when
+                                      # this file is config.yml). The UI's preset
+                                      # libraries live alongside it as
+                                      # <stem>.presets-tokens.json / <stem>.presets-repos.json
 # env_file: secrets.env               # values file; defaults to discovery
                                       # (.env.local, config/.env.local,
                                       # config/secrets.env, then the XDG path)

@@ -79,7 +79,7 @@ class ConfigEditorTest < Minitest::Test
         }
       }
 
-      preview = editor.preview("revision" => view.fetch("revision"), "rules" => rules)
+      preview = editor.preview(payload(view, rules: rules))
       source = preview.fetch("sources").first
       public_repo = source.fetch("repositories").find { |repo| repo.fetch("name") == "example/repo" }
       private_repo = source.fetch("repositories").find { |repo| repo.fetch("name") == "example/private-repo" }
@@ -108,8 +108,7 @@ class ConfigEditorTest < Minitest::Test
       )
       view = editor.data
       preview = editor.preview(
-        "revision" => view.fetch("revision"),
-        "rules" => { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "include" } } }
+        payload(view, rules: { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "include" } } })
       )
       source = preview.fetch("sources").find { |entry| entry.fetch("id") == "github-main" }
       repository = source.fetch("repositories").find { |entry| entry.fetch("name") == "example/repo" }
@@ -124,7 +123,7 @@ class ConfigEditorTest < Minitest::Test
       view = editor.data
       rules = { "github-main" => { "example/private-repo" => { "SAMPLE_TOKEN" => "include" } } }
 
-      saved = editor.save("revision" => view.fetch("revision"), "rules" => rules)
+      saved = editor.save(payload(view, rules: rules))
       stored = CredAlignFlow::Rules.new(rules_path)
 
       assert_equal "include", stored.rule("github-main", "example/private-repo", "SAMPLE_TOKEN")
@@ -144,7 +143,7 @@ class ConfigEditorTest < Minitest::Test
           "example/private-repo" => { "SAMPLE_TOKEN" => "include" }
         }
       }
-      editor.save("revision" => view.fetch("revision"), "rules" => rules)
+      editor.save(payload(view, rules: rules))
 
       config = CredAlignFlow::Config.new(config_path)
       public_assignment = config.secret_assignment(config.secrets.first, "github-main", TestSupport.repository_metadata)
@@ -184,21 +183,19 @@ class ConfigEditorTest < Minitest::Test
 
       assert_raises(CredAlignFlow::ConfigError) do
         editor.preview(
-          "revision" => view.fetch("revision"),
-          "rules" => { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "sometimes" } } }
+          payload(view, rules: { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "sometimes" } } })
         )
       end
       assert_raises(CredAlignFlow::ConfigError) do
         editor.preview(
-          "revision" => view.fetch("revision"),
-          "rules" => { "github-main" => { "example/repo" => { "UNKNOWN_TOKEN" => "include" } } }
+          payload(view, rules: { "github-main" => { "example/repo" => { "UNKNOWN_TOKEN" => "include" } } })
         )
       end
       refute_path_exists rules_path
 
       File.write(rules_path, JSON.generate("version" => 1, "rules" => {}))
       assert_raises(CredAlignFlow::ConfigEditor::RevisionConflict) do
-        editor.save("revision" => view.fetch("revision"), "rules" => {})
+        editor.save(payload(view))
       end
     end
   end
@@ -207,7 +204,7 @@ class ConfigEditorTest < Minitest::Test
     with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
       view = editor.data
       rules = { "github-main" => { "example/vanished" => { "SAMPLE_TOKEN" => "include" } } }
-      saved = editor.save("revision" => view.fetch("revision"), "rules" => rules)
+      saved = editor.save(payload(view, rules: rules))
       orphan = saved.fetch("orphan_rules").find { |entry| entry.fetch("repository") == "example/vanished" }
 
       assert_equal "SAMPLE_TOKEN", orphan.fetch("secret")
@@ -216,7 +213,156 @@ class ConfigEditorTest < Minitest::Test
     end
   end
 
+  def test_saved_token_defaults_change_the_effective_scope_for_the_cli
+    with_editor do |editor, config_path, _env_path, _state_path, rules_path|
+      original = File.binread(config_path)
+      view = editor.data
+      defaults = { "SAMPLE_TOKEN" => { "visibility" => "all" } }
+
+      saved = editor.save(payload(view, token_defaults: defaults))
+      stored = CredAlignFlow::Rules.new(rules_path)
+      config = CredAlignFlow::Config.new(config_path)
+      private_repo = saved.fetch("sources").first.fetch("repositories")
+                          .find { |repo| repo.fetch("name") == "example/private-repo" }
+
+      assert_equal 2, stored.data.fetch("version")
+      assert_equal({ "visibility" => "all" }, stored.default_overlay("SAMPLE_TOKEN"))
+      assert_equal "all", config.secret_visibility(config.secrets.first)
+      assert_equal "public", config.raw_secrets.first.fetch("visibility")
+      assert_equal "default", private_repo.fetch("assigned").first.fetch("origin")
+      assert_equal original, File.binread(config_path)
+    end
+  end
+
+  def test_preview_validates_token_defaults_without_writing
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      view = editor.data
+
+      preview = editor.preview(payload(view, token_defaults: { "SAMPLE_TOKEN" => { "visibility" => "all" } }))
+      entry = preview.fetch("secrets").first
+
+      assert_equal "all", entry.dig("config", "visibility")
+      assert_equal "public", entry.dig("yaml", "visibility")
+      assert_equal({ "visibility" => "all" }, entry.fetch("overrides"))
+      refute_path_exists rules_path
+
+      assert_raises(CredAlignFlow::ConfigError) do
+        editor.preview(payload(view, token_defaults: { "UNKNOWN_TOKEN" => { "visibility" => "all" } }))
+      end
+      assert_raises(CredAlignFlow::ConfigError) do
+        editor.preview(payload(view, token_defaults: { "SAMPLE_TOKEN" => { "visibility" => "bogus" } }))
+      end
+      assert_raises(CredAlignFlow::ConfigError) do
+        editor.preview(payload(view, token_defaults: { "SAMPLE_TOKEN" => { "value_env" => "OTHER" } }))
+      end
+      refute_path_exists rules_path
+    end
+  end
+
+  def test_saved_presets_round_trip_through_the_preset_files
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      view = editor.data
+      token_presets = { "github-public" => { "visibility" => "public", "targets" => { "github" => %w[actions] } } }
+      repo_presets = { "ci-lockdown" => { "SAMPLE_TOKEN" => "include", "*" => "exclude" } }
+
+      saved = editor.save(payload(view, token_presets: token_presets, repo_presets: repo_presets))
+      token_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :tokens)
+      repo_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :repos)
+
+      assert_equal token_presets, saved.fetch("token_presets")
+      assert_equal repo_presets, saved.fetch("repo_presets")
+      assert_equal token_presets, CredAlignFlow::PresetLibrary.new(token_path, type: :tokens).presets
+      assert_equal repo_presets, CredAlignFlow::PresetLibrary.new(repo_path, type: :repos).presets
+      # Presets stay out of the rules file; with no token_defaults it
+      # normalizes back to schema v1.
+      assert_equal 1, JSON.parse(File.read(rules_path)).fetch("version")
+    end
+  end
+
+  def test_save_rejects_presets_with_unknown_references
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      view = editor.data
+      repo_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :repos)
+      token_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :tokens)
+
+      error = assert_raises(CredAlignFlow::ConfigError) do
+        editor.save(payload(view, repo_presets: { "p" => { "GHOST_TOKEN" => "include" } }))
+      end
+      assert_includes error.message, "unknown tokens: GHOST_TOKEN"
+      refute_path_exists repo_path
+
+      error = assert_raises(CredAlignFlow::ConfigError) do
+        editor.preview(payload(view, token_presets: { "p" => { "sources" => ["ghost-source"] } }))
+      end
+      assert_includes error.message, "unknown sources"
+      refute_path_exists token_path
+    end
+  end
+
+  def test_preview_shows_candidate_presets_without_writing
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      view = editor.data
+      token_presets = { "p" => { "visibility" => "all" } }
+
+      preview = editor.preview(payload(view, token_presets: token_presets))
+      token_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :tokens)
+
+      assert_equal token_presets, preview.fetch("token_presets")
+      refute_path_exists token_path
+
+      # The saved library still wins on a plain reload.
+      assert_equal({}, editor.data.fetch("token_presets"))
+    end
+  end
+
+  def test_preset_file_changes_on_disk_stale_the_revision
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      view = editor.data
+      token_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :tokens)
+
+      # A preset file appearing (or changing) between load and save must
+      # conflict just like a rules or config change would.
+      File.write(token_path, JSON.generate("version" => 1, "presets" => {}))
+
+      assert_raises(CredAlignFlow::ConfigEditor::RevisionConflict) do
+        editor.save(payload(view))
+      end
+    end
+  end
+
+  def test_malformed_preset_file_fails_closed
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      token_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :tokens)
+      File.write(token_path, "{ not json")
+
+      error = assert_raises(CredAlignFlow::ConfigError) { editor.data }
+
+      assert_includes error.message, "presets-tokens.json"
+    end
+  end
+
+  def test_save_requires_all_sections_in_the_payload
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      view = editor.data
+
+      assert_raises(CredAlignFlow::ConfigError) do
+        editor.save("revision" => view.fetch("revision"), "rules" => {})
+      end
+      refute_path_exists rules_path
+    end
+  end
+
   private
+
+  def payload(view, rules: {}, token_defaults: {}, token_presets: {}, repo_presets: {})
+    {
+      "revision" => view.fetch("revision"),
+      "rules" => rules,
+      "token_defaults" => token_defaults,
+      "token_presets" => token_presets,
+      "repo_presets" => repo_presets
+    }
+  end
 
   def with_editor(providers: {})
     Dir.mktmpdir do |dir|

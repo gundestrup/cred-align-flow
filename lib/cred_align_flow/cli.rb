@@ -643,7 +643,7 @@ module CredAlignFlow
           check      Exit non-zero when expected secrets are missing or stale
           apply      Write missing or stale secrets
           scaffold   Add active secret entries for unmanaged env-file variables
-          ui         Edit token rules and review repository assignments in a local browser
+          ui         Edit token defaults, presets, and repository rules in a local browser
 
         Common options:
           --config PATH     Configuration file

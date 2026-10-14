@@ -7,19 +7,29 @@ module CredAlignFlow
   # so the page can distinguish "delete a JSON override" from "write an
   # explicit default that cancels YAML intent".
   class ConfigView
-    def initialize(config:, state:, env_values:, revision:, display_revision: revision, scaffolder: nil)
+    # presets is a {"tokens" => PresetLibrary, "repos" => PresetLibrary}
+    # pair — the candidate libraries during preview, the saved ones
+    # otherwise.
+    def initialize(config:, state:, env_values:, revision:, presets:,
+                   display_revision: revision, scaffolder: nil)
       @config = config
       @state = state
       @env_values = env_values
       @revision = revision
       @display_revision = display_revision
       @scaffolder = scaffolder
+      @token_presets = presets.fetch("tokens")
+      @repo_presets = presets.fetch("repos")
     end
 
     def to_h
       {
         "config_file" => File.basename(@config.path),
         "rules_file" => File.basename(@config.rules_file),
+        "preset_files" => {
+          "tokens" => File.basename(@token_presets.path),
+          "repos" => File.basename(@repo_presets.path)
+        },
         "revision" => @revision,
         "display_revision" => @display_revision,
         "generated_at" => @state.data["generated_at"],
@@ -28,6 +38,9 @@ module CredAlignFlow
         "secrets" => secret_entries,
         "sources" => source_entries,
         "rules" => @config.rules.entries,
+        "token_defaults" => @config.rules.token_defaults,
+        "token_presets" => @token_presets.presets,
+        "repo_presets" => @repo_presets.presets,
         "orphan_rules" => orphan_rules,
         "unimported_env_names" => unimported_env_names,
         "ignored_env_names" => @config.ignored_env_names,
@@ -45,10 +58,17 @@ module CredAlignFlow
       end
     end
 
+    # "config" is the effective entry (YAML merged with rules-file
+    # token_defaults); "yaml" is the hand-edited source entry and
+    # "overrides" the overlay fields, so the page can show provenance and
+    # reset overrides without resending merged data.
     def secret_entries
-      @config.secrets.map do |secret|
+      @config.secrets.each_with_index.map do |secret, index|
+        raw = @config.raw_secrets[index]
         {
           "config" => json_safe(secret).except("value_digest"),
+          "yaml" => raw.is_a?(Hash) ? json_safe(raw).except("value_digest") : {},
+          "overrides" => json_safe(@config.rules.default_overlay(secret["name"]) || {}),
           "value_available" => !@config.value_for(secret, @env_values).nil?,
           "value_digest_status" => @config.value_digest_status(secret, @env_values).to_s
         }

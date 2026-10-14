@@ -180,6 +180,7 @@ module CredAlignFlow
       names = []
       @secrets.each_with_index do |secret, index|
         context = "secret entry #{index + 1}"
+        context += " (including rules-file token_defaults)" if secret.is_a?(Hash) && @rules.default_overlay(secret["name"])
         name = validate_secret!(secret, context)
         raise ConfigError, "duplicate secret name: #{name}" if names.include?(name)
 
@@ -194,7 +195,7 @@ module CredAlignFlow
       name = validate_secret_name!(secret["name"], context)
       validate_environment_name!(secret["value_env"], "#{context} value_env") if secret.key?("value_env")
       validate_secret_versioning!(secret, context)
-      normalize_visibility(secret["visibility"]) if secret.key?("visibility")
+      normalize_visibility(secret["visibility"], context) if secret.key?("visibility")
       validate_secret_sources!(secret, context)
       validate_secret_exclusions!(secret, context)
       validate_secret_repository_rules!(secret, context)
@@ -362,13 +363,14 @@ module CredAlignFlow
       raise ConfigError, "#{context} must be true or false"
     end
 
-    def normalize_visibility(value)
-      raise ConfigError, "visibility must be a string" unless value.is_a?(String)
+    def normalize_visibility(value, context = nil)
+      prefix = context ? "#{context} " : ""
+      raise ConfigError, "#{prefix}visibility must be a string" unless value.is_a?(String)
 
       visibility = value.downcase
       return visibility if %w[public private all].include?(visibility)
 
-      raise ConfigError, "visibility must be public, private, or all (got #{value.inspect})"
+      raise ConfigError, "#{prefix}visibility must be public, private, or all (got #{value.inspect})"
     end
 
     def parse_version_time(value, explicit: false)

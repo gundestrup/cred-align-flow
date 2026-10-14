@@ -32,7 +32,7 @@ module CredAlignFlow
     TIMESTAMP_PATTERN = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\z/i
     ENVIRONMENT_NAME_PATTERN = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
-    attr_reader :path, :sources, :secrets, :rules
+    attr_reader :path, :sources, :secrets, :rules, :raw_secrets
 
     def self.default_path
       DEFAULT_NAMES.each do |name|
@@ -71,9 +71,10 @@ module CredAlignFlow
 
       @data = parsed
       @sources = parsed.fetch("sources", {})
-      @secrets = parsed.fetch("secrets", [])
-      validate!
       @rules = rules || Rules.new(rules_file)
+      @raw_secrets = parsed.fetch("secrets", [])
+      @secrets = @raw_secrets.map { |secret| merge_token_defaults(secret) }
+      validate!
       @rules.validate_references!(source_ids, @secrets.map { |secret| secret.fetch("name") })
     rescue Psych::Exception => e
       raise ConfigError, "Invalid config YAML: #{e.message}"
@@ -147,7 +148,7 @@ module CredAlignFlow
       include_forks = boolean!(repo_config.fetch("include_forks", false), "repositories.include_forks")
 
       {
-        "visibility" => normalize_visibility(repo_config.fetch("visibility", "public")),
+        "visibility" => normalize_visibility(repo_config.fetch("visibility", "public"), "repositories for #{source_id}"),
         "include_archived" => include_archived,
         "include_forks" => include_forks,
         "include" => include,
@@ -239,6 +240,13 @@ module CredAlignFlow
       normalize_visibility(secret.fetch("visibility", "public"))
     end
 
+    # The rules-file token_defaults entry overriding this secret's YAML
+    # default-scope fields, or nil. Identity/lifecycle keys are never
+    # overridable — only Rules::TOKEN_DEFAULT_KEYS merge in.
+    def token_default_overlay(secret)
+      @rules.default_overlay(secret["name"]) if secret.is_a?(Hash)
+    end
+
     def secret_exclusions(secret, source_id)
       exclusions = secret["exclude_repositories"] || secret["exclude_repos"] || []
       case exclusions
@@ -300,10 +308,25 @@ module CredAlignFlow
       Fingerprint.matches?(recorded, secret.fetch("name"), value) ? :current : :changed
     end
 
+    private
+
     # Relative state_file/rules_file paths resolve against the config file's
     # directory so a self-contained config/ dir stays portable.
     def expand_config_path(value)
       File.expand_path(value.to_s, File.dirname(@path))
+    end
+
+    # Applies the rules-file token_defaults overlay to a YAML secret entry.
+    # An overlaid exclude_repositories replaces both YAML exclusion keys so
+    # the merged entry never carries the exclude_repositories/exclude_repos
+    # pair that validation rejects.
+    def merge_token_defaults(secret)
+      overlay = token_default_overlay(secret)
+      return secret unless overlay
+
+      merged = secret.merge(overlay)
+      merged.delete("exclude_repos") if overlay.key?("exclude_repositories")
+      merged
     end
   end
 end

@@ -56,11 +56,24 @@ module CredAlignFlow
        "Repository visibility scope: `public`, `private`, or `all` — which repos may receive this token. " \
        "This is a local repository filter, not a provider-side secret visibility setting."],
       ["Source scope",
-       "Which sources (e.g. github-main, forgejo-main) the token applies to; \"all\" means every " \
-       "configured source."],
+       "Which sources (e.g. github-main, forgejo-main) the token applies to; no selection (or \"all\") " \
+       "means every configured source."],
       ["Targets",
        "Provider secret stores per source type — GitHub `actions` and `dependabot`, Forgejo `actions`. " \
        "Sources marked pull-only cannot receive writes at all."],
+      ["Token default overrides",
+       "The editable fields on a token card write `token_defaults` entries in the rules file. A field " \
+       "set here replaces the same YAML field; fields marked `override` differ from the hand-edited " \
+       "value. \"Reset to YAML defaults\" removes a token's overrides. Name, value env, versions, and " \
+       "`exclude_sources` stay YAML-only — exclusions there always win. A comma-separated exclusion " \
+       "list applies to all sources; per-source exclusion maps remain YAML-only."],
+      ["Token presets",
+       "Named scope templates in the token preset file. Applying one on a token card copies its " \
+       "fields into that token's overrides — later preset edits do not change tokens already stamped."],
+      ["Repository presets",
+       "Named `token => rule` bundles in the repo preset file; `*` covers every token not listed. " \
+       "Applying one on a repository card stamps those rules onto that repo — later preset edits " \
+       "do not re-apply."],
       ["Hard vs soft exclusions",
        "`exclude_sources` and source repository filters are hard boundaries — no rule can cross them. " \
        "`exclude_repositories` and YAML repository rules are overridable defaults — an `include` or " \
