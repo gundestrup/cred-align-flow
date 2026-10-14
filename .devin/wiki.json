@@ -1,0 +1,54 @@
+{
+  "repo_notes": [
+    {
+      "content": "cred-align-flow is a provider-agnostic CLI tool (Ruby >= 3.4.10) for synchronizing secrets and CI variables across repository hosting platforms, with drift detection. It currently supports GitHub Actions/Dependabot repository secrets and pull-only Forgejo Actions secrets; the internal source/target model is designed to extend to GitLab CI variables and more Forgejo/Gitea operations. Licensed AGPL-3.0-only."
+    },
+    {
+      "content": "Safety is central to this project: remote writes are irreversible, `apply --force` can overwrite values the tool did not set, and the README.safety.md security model should be emphasized when generating wiki content. Local configuration lives in config/cred-align.local.yml (from config.example.yml) plus config/secrets.env; secret values are referenced indirectly via env vars and fingerprinted with value_digest rather than stored."
+    },
+    {
+      "content": "Core workflow is: doctor (validate local config) -> inventory/pull (fetch remote metadata) -> plan/diff (preview, read-only, supports --offline) -> check (fail on missing/unverified/stale secrets) -> apply (write after confirmed plan). A local Rack-based browser UI (the `ui` command) edits per-repository token rules. Tests use Minitest under test/ with Docker-based Forgejo integration tests; CI runs RuboCop, Semgrep, SonarCloud, and Codecov."
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "Project purpose, safety model, command workflow (doctor/inventory/plan/check/apply), documentation map, and license. Entry point for the wiki.",
+      "page_notes": [
+        {
+          "content": "Key sources: README.md (overview and commands at a glance), README.safety.md (warnings and security model), README.usage.md (command reference), DISCLAIMER.md, CHANGELOG.md, bin/cred-align-flow, lib/cred_align_flow.rb."
+        }
+      ]
+    },
+    {
+      "title": "CLI and Command Flow",
+      "purpose": "The bin/cred-align-flow entrypoint and lib/cred_align_flow/cli.rb command dispatch: doctor, inventory/pull, plan/diff, check, apply, scaffold, ui, and their flags (--dry-run, --yes, --force, --offline, --source/--repo/--secret/--context filters).",
+      "parent": "Overview"
+    },
+    {
+      "title": "Configuration System",
+      "purpose": "Local YAML configuration and secrets handling: config.rb, config_editor.rb, config_validation.rb, config_view.rb, dotenv.rb, config.example.yml, secrets.env.example, and the fingerprint.rb value_digest mechanism that avoids storing secret values.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Provider Adapters",
+      "purpose": "Provider abstraction and adapters: provider.rb, providers.rb, providers/github.rb (via the gh CLI), providers/forgejo.rb (pull-only), selector.rb, and the adapter contract documented in README.devel.md.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Plan and Apply Pipeline",
+      "purpose": "Drift detection and write pipeline: inventory.rb and inventory_check.rb fetch remote metadata, planner.rb computes managed target states, rules.rb and state.rb track desired vs actual state, applier.rb performs writes, atomic_file.rb guards file updates, release_checker.rb/release_version.rb handle versioning.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Local Configuration UI",
+      "purpose": "The `ui` command: config_server.rb, config_rack_app.rb, config_ui.ru, config_ui.html, and ui_metadata.rb implementing a local Rack browser editor for per-repository token rules. See README.ui.md.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Testing and CI",
+      "purpose": "Minitest suite under test/ (unit tests mirroring lib/, provider contract tests), Docker-based Forgejo integration tests in test/integration/, and CI in .github/workflows/ci.yml with RuboCop, Semgrep (.semgrep.yml), SonarCloud, and Codecov. Development workflow in README.devel.md.",
+      "parent": "Overview"
+    }
+  ]
+}
