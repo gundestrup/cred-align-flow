@@ -317,6 +317,45 @@ class ConfigServerTest < Minitest::Test
     )
   end
 
+  def test_ui_lock_rejects_a_second_instance
+    Dir.mktmpdir do |dir|
+      editor = Struct.new(:config_path).new(File.join(dir, "config.yml"))
+      held = CredAlignFlow::ConfigServer.new(editor: editor, port: 8043).send(:claim_ui_lock)
+      other = CredAlignFlow::ConfigServer.new(editor: editor, port: 8043)
+
+      error = assert_raises(CredAlignFlow::ConfigError) { other.send(:claim_ui_lock) }
+
+      assert_includes error.message, "already holds"
+      assert_includes error.message, "ui --stop"
+      held.close
+    end
+  end
+
+  def test_ui_stop_without_lock_fails_cleanly
+    Dir.mktmpdir do |dir|
+      editor = Struct.new(:config_path).new(File.join(dir, "config.yml"))
+      server = CredAlignFlow::ConfigServer.new(editor: editor, port: 8043)
+
+      error = assert_raises(CredAlignFlow::ConfigError) { server.stop }
+
+      assert_includes error.message, "no config UI lock"
+    end
+  end
+
+  def test_ui_stop_removes_stale_lock_for_a_non_ui_process
+    Dir.mktmpdir do |dir|
+      editor = Struct.new(:config_path).new(File.join(dir, "config.yml"))
+      lock_path = File.join(dir, ".ui.lock")
+      File.write(lock_path, Process.pid.to_s) # the test runner is not an itsi process
+      server = CredAlignFlow::ConfigServer.new(editor: editor, port: 8043)
+
+      error = assert_raises(CredAlignFlow::ConfigError) { server.stop }
+
+      assert_includes error.message, "stale lock"
+      refute_path_exists lock_path
+    end
+  end
+
   def test_rack_app_rejects_untrusted_host_and_remote_addresses
     with_rack_app do |app, _config_path|
       bad_host = call(app, "GET", "/api/data", host: "attacker.example:8043")

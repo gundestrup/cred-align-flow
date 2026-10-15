@@ -37,7 +37,8 @@ module CredAlignFlow
         return scaffold_secrets(config, env_values, options)
       when "ui"
         editor = ConfigEditor.new(config_path: config.path, env_path: @env_path, state_path: state.path)
-        ConfigServer.new(editor: editor, port: options[:port] || ConfigServer::DEFAULT_PORT).start
+        server = ConfigServer.new(editor: editor, port: options[:port] || ConfigServer::DEFAULT_PORT)
+        options[:stop] ? server.stop : server.start
       when "inventory", "pull"
         refresh_inventory(config, state, env_values, source_filter: options[:source])
       when "plan", "diff", "check"
@@ -200,6 +201,7 @@ module CredAlignFlow
       opts.on("--env-file PATH", "Local environment/value file") { |value| options[:env_file] = value }
       opts.on("--state PATH", "Inventory state file") { |value| options[:state] = value }
       opts.on("--port PORT", Integer, "Local config UI port") { |value| options[:port] = value } if command == "ui"
+      opts.on("--stop", "Stop a running local config UI") { options[:stop] = true } if command == "ui"
     end
 
     def register_filter_options(opts, options, command)
@@ -650,6 +652,7 @@ module CredAlignFlow
           --env-file PATH   Local secret-value environment file
           --state PATH      Inventory state file
           --port PORT       ui only: local server port (default: #{ConfigServer::DEFAULT_PORT})
+          --stop            ui only: stop a running local config UI
           --verify          doctor only: probe provider authentication/connectivity
 
         Inventory/pull/plan/diff/check/apply options:

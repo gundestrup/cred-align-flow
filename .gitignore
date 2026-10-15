@@ -12,6 +12,7 @@ secrets.yaml
 secrets.env
 .cred-align-flow/
 /config/
+.ui.lock
 .cred-align-flow-config-*.tmp
 .cred-align-flow-rules-*.tmp
 *presets-*.json-*.tmp

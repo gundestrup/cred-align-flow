@@ -28,6 +28,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   still written as `version: 1`, so they stay readable by older builds;
   version 2 files fail closed on older builds instead of silently
   ignoring overrides that change the plan.
+- `cred-align-flow ui --stop` stops a running local UI, and the server
+  now holds a `.ui.lock` beside the config file so a second `ui` start
+  fails fast instead of stacking listeners on the port.
 
 ### Changed
 
