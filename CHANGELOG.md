@@ -50,6 +50,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   names, the config UI lists them separately under "Cannot be
   imported", and explicit `--target` imports of an invalid name still
   fail.
+- The CI `sonar` job is removed: the project now uses SonarCloud
+  Automatic Analysis, which conflicts with CI-based scanning.
+  `sonar-project.properties` remains for manual/local scanner runs —
+  Automatic Analysis does not import the external RuboCop/SimpleCov
+  reports, so the SonarCloud coverage badge stops updating (Codecov
+  coverage is unaffected).
 - `scaffold_action: auto` now writes minimal **inactive** entries:
   identity fields plus an explicit empty `targets` list per configured
   provider type, so imported tokens are assigned nowhere and plan/apply
