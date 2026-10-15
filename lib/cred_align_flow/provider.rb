@@ -2,7 +2,7 @@
 
 module CredAlignFlow
   class Provider
-    REQUIRED_METHODS = %i[repositories repository secrets set_secret].freeze
+    REQUIRED_METHODS = %i[repositories repository secrets set_secret delete_secret].freeze
     WRITABLE = true
     MAX_SECRET_VALUE_BYTES = nil
     MAX_REPOSITORY_SECRETS = nil
@@ -31,6 +31,14 @@ module CredAlignFlow
     # default refuses.
     def self.owner_scope_writable?(_source)
       false
+    end
+
+    # Whether `prune` can remove a remote secret in this context.
+    # Owner-scope stores can never be deleted (the API is write-only);
+    # a pull-only adapter may still allow deletes — removal is not a
+    # value write — so adapters override this separately from WRITABLE.
+    def self.deletable?(context)
+      self::WRITABLE && !owner_scoped_context?(context)
     end
 
     def self.assert_contract!(adapter_class)
@@ -90,6 +98,10 @@ module CredAlignFlow
       raise NotImplementedError, "#{self.class} must implement set_secret"
     end
 
+    def delete_secret(_repository, _context, _name)
+      raise NotImplementedError, "#{self.class} must implement delete_secret"
+    end
+
     def contexts
       self.class.const_defined?(:CONTEXTS) ? self.class::CONTEXTS : []
     end
@@ -112,6 +124,10 @@ module CredAlignFlow
       return owner_scope_writable? if context && owner_scoped_context?(context)
 
       self.class::WRITABLE
+    end
+
+    def deletable?(context)
+      self.class.deletable?(context)
     end
 
     def cli_version

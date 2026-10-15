@@ -37,7 +37,7 @@ module CredAlignFlow
     TIMESTAMP_PATTERN = /\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})\z/i
     ENVIRONMENT_NAME_PATTERN = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
-    attr_reader :path, :sources, :secrets, :rules, :raw_secrets
+    attr_reader :path, :sources, :secrets, :rules, :raw_secrets, :stale_rules
 
     def self.default_path
       DEFAULT_NAMES.each do |name|
@@ -80,7 +80,7 @@ module CredAlignFlow
       @raw_secrets = parsed.fetch("secrets", [])
       @secrets = @raw_secrets.map { |secret| merge_token_defaults(secret) }
       validate!
-      @rules.validate_references!(source_ids, @secrets.map { |secret| secret.fetch("name") })
+      @stale_rules = @rules.stale_references(source_ids, @secrets.map { |secret| secret.fetch("name") })
     rescue Psych::Exception => e
       raise ConfigError, "Invalid config YAML: #{e.message}"
     end
@@ -190,6 +190,7 @@ module CredAlignFlow
       repository_rule = secret_repository_rule(secret, source_id, repo_name)
       return ["assigned_manual", "explicit repository include"] if repository_rule == "include"
       return ["excluded_manual", "explicit repository exclusion"] if repository_rule == "exclude"
+      return ["deleted_manual", "marked for deletion — run prune to remove the remote secret"] if repository_rule == "delete"
 
       if repository_rule != "default" && Selector.matches_any?(secret_exclusions(secret, source_id), repository)
         return ["excluded_manual", "matches an explicit repository exclusion"]

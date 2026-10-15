@@ -31,16 +31,22 @@ module CredAlignFlow
 
       dispatch_request(env)
     rescue RequestError => e
+      log_request_error(env, e.status, e.message)
       json_response({ "error" => e.message }, status: e.status)
     rescue ConfigEditor::RevisionConflict => e
+      log_request_error(env, 409, e.message)
       json_response({ "error" => e.message }, status: 409)
     rescue ConfigError, StateError => e
+      log_request_error(env, 422, e.message)
       json_response({ "error" => e.message }, status: 422)
-    rescue ProviderError
+    rescue ProviderError => e
+      log_request_error(env, 422, "inventory refresh failed (#{e.class})")
       json_response({ "error" => "inventory refresh failed; check provider authentication and retry" }, status: 422)
-    rescue JSON::ParserError, KeyError
+    rescue JSON::ParserError, KeyError => e
+      log_request_error(env, 400, "invalid request body (#{e.class})")
       json_response({ "error" => "invalid request body" }, status: 400)
-    rescue StandardError
+    rescue StandardError => e
+      log_request_error(env, 500, "#{e.class}: #{e.message}")
       json_response({ "error" => "request failed" }, status: 500)
     end
 
@@ -144,6 +150,13 @@ module CredAlignFlow
     # served verbatim; only same-origin loads are allowed by the CSP.
     def asset_response(name, content_type)
       [200, security_headers.merge("Content-Type" => content_type), [File.read(File.join(__dir__, name))]]
+    end
+
+    # 4xx/5xx API responses are echoed to stderr so the terminal that
+    # launched `ui` shows why a request failed — the browser only keeps
+    # the same message in the status bar.
+    def log_request_error(env, status, detail)
+      warn "[config-ui] #{env['REQUEST_METHOD']} #{env['PATH_INFO']} -> #{status}: #{detail}"
     end
 
     def json_response(data, status: 200)

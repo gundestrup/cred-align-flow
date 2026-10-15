@@ -112,7 +112,7 @@ class PresetLibraryTest < Minitest::Test
 
       [
         [{ "bad token!" => "include" }, "secret names"],
-        [{ "SONAR_TOKEN" => "sometimes" }, "default, include, or exclude"],
+        [{ "SONAR_TOKEN" => "sometimes" }, "default, include, exclude, or delete"],
         ["not-a-map", "must be a mapping"]
       ].each do |fields, fragment|
         error = assert_raises(CredAlignFlow::ConfigError) do
@@ -186,6 +186,100 @@ class PresetLibraryTest < Minitest::Test
         error = assert_raises(CredAlignFlow::ConfigError) { library.validate_references!(config) }
         assert_includes error.message, fragment
       end
+    end
+  end
+
+  def test_repo_preset_stale_references_and_live_presets
+    Dir.mktmpdir do |dir|
+      config = StubConfig.new([{ "name" => "SONAR_TOKEN" }], ["github-main"])
+      library = CredAlignFlow::PresetLibrary.new(
+        File.join(dir, "presets-repos.json"),
+        type: :repos,
+        data: {
+          "version" => 1,
+          "presets" => {
+            "hosting" => { "SONAR_TOKEN" => "include", "GHOST_TOKEN" => "exclude", "*" => "default" }
+          }
+        }
+      )
+
+      assert_equal(
+        [{
+          "section" => "preset:repos",
+          "preset" => "hosting",
+          "secret" => "GHOST_TOKEN",
+          "rule" => "exclude",
+          "reason" => "token not in config"
+        }],
+        library.stale_references(config)
+      )
+      assert_equal(
+        { "hosting" => { "SONAR_TOKEN" => "include", "*" => "default" } },
+        library.live_presets(config)
+      )
+      # Strict validation still guards what a save submits.
+      assert_raises(CredAlignFlow::ConfigError) { library.validate_references!(config) }
+    end
+  end
+
+  def test_token_preset_stale_references_and_live_presets
+    Dir.mktmpdir do |dir|
+      config = StubConfig.new([{ "name" => "SONAR_TOKEN" }], ["github-main"])
+      library = CredAlignFlow::PresetLibrary.new(
+        File.join(dir, "presets-tokens.json"),
+        type: :tokens,
+        data: {
+          "version" => 1,
+          "presets" => {
+            "hosting" => {
+              "visibility" => "public",
+              "sources" => %w[github-main gone-source],
+              "exclude_repositories" => { "github-main" => ["x/*"], "gone-source" => ["y/*"] }
+            }
+          }
+        }
+      )
+
+      assert_equal(
+        [
+          {
+            "section" => "preset:tokens", "preset" => "hosting",
+            "field" => "sources", "value" => "gone-source", "reason" => "source not in config"
+          },
+          {
+            "section" => "preset:tokens", "preset" => "hosting",
+            "field" => "exclude_repositories", "value" => "gone-source", "reason" => "source not in config"
+          }
+        ],
+        library.stale_references(config)
+      )
+      assert_equal(
+        {
+          "hosting" => {
+            "visibility" => "public",
+            "sources" => ["github-main"],
+            "exclude_repositories" => { "github-main" => ["x/*"] }
+          }
+        },
+        library.live_presets(config)
+      )
+      assert_raises(CredAlignFlow::ConfigError) { library.validate_references!(config) }
+    end
+  end
+
+  def test_token_preset_drops_scope_fields_left_empty_by_stale_sources
+    Dir.mktmpdir do |dir|
+      config = StubConfig.new([{ "name" => "SONAR_TOKEN" }], ["github-main"])
+      library = CredAlignFlow::PresetLibrary.new(
+        File.join(dir, "presets-tokens.json"),
+        type: :tokens,
+        data: {
+          "version" => 1,
+          "presets" => { "gone" => { "sources" => ["ghost"], "exclude_repositories" => { "ghost" => ["x"] } } }
+        }
+      )
+
+      assert_equal({ "gone" => {} }, library.live_presets(config))
     end
   end
 end

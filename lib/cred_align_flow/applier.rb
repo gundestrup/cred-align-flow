@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "time"
+require_relative "applier_deletion"
 require_relative "timestamp"
 
 module CredAlignFlow
@@ -11,6 +12,8 @@ module CredAlignFlow
   # provider at write time because `gh secret set` also overwrites existing
   # secrets. Results are structured outcomes: applied / skipped / failed.
   class Applier
+    include ApplierDeletion
+
     Outcome = Struct.new(:item, :status, :detail, keyword_init: true)
 
     def initialize(config, state, env_values, providers: {})

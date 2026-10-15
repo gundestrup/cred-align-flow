@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "time"
+require_relative "planner_deletes"
 require_relative "timestamp"
 
 module CredAlignFlow
@@ -15,6 +16,8 @@ module CredAlignFlow
   # unchanged, because the desired fingerprint no longer matches the
   # fingerprint recorded at the last successful apply.
   class Planner
+    include PlannerDeletes
+
     Item = Struct.new(:action, :source, :repository, :context, :secret, :detail, keyword_init: true) do
       def actionable?(force: false)
         case action
@@ -75,6 +78,7 @@ module CredAlignFlow
         end
 
         plan_owner_scope(source_id)
+        plan_deletes(source_id, expected_names)
         add_unexpected_items(source_id, expected_names) if @secret_filter.nil? && @context_filter.nil?
       end
 
@@ -88,7 +92,7 @@ module CredAlignFlow
 
     def blocking_items(strict: false)
       plan.select do |item|
-        %w[create update remote_newer unverified_present missing_value pull_only].include?(item.action) ||
+        %w[create update remote_newer unverified_present missing_value pull_only delete].include?(item.action) ||
           (strict && item.action == "unexpected")
       end
     end

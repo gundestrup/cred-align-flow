@@ -37,6 +37,9 @@
     <button id="cancel">Cancel changes</button>
     <button id="save" class="primary" disabled>Save</button>
     <input id="repo-filter" class="filter" type="search" placeholder="Filter repositories…" aria-label="Filter repositories">
+    <!-- Status lives inside the sticky actions bar so validation errors
+         stay visible while editing tokens far down the page. -->
+    <div id="message" class="message" role="status" aria-live="polite"></div>
   </div>
   <input class="tab-state" type="radio" name="tab" id="tab-repositories" checked>
   <input class="tab-state" type="radio" name="tab" id="tab-tokens">
@@ -46,7 +49,6 @@
     <label class="tab" for="tab-tokens">Tokens</label>
     <label class="tab" for="tab-presets">Presets</label>
   </nav>
-  <div id="message" class="message" role="status" aria-live="polite"></div>
   <main>
     <div data-panel="repositories">
       <section class="panel" aria-labelledby="sources-heading">

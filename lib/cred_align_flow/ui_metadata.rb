@@ -21,13 +21,16 @@ module CredAlignFlow
       "remote_newer" => "the remote secret changed after the last recorded apply; requires `apply --force` after review",
       "missing_value" => "no local value is set for this secret",
       "pull_only" => "the provider cannot receive writes",
+      "delete" => "a `delete` repository rule marked this remote secret for removal; " \
+                  "`prune` walks each marked item for confirmation before deleting",
       "unexpected" => "remote-only secret, report-only",
       "not_checked" => "no inventory is available",
       "not_refreshed" => "inventory does not cover this context"
     }.freeze
 
     APPLY_NOTE =
-      "Apply prints the current plan and asks before writing; noninteractive use must pass `--yes`."
+      "Apply prints the current plan and asks before writing; noninteractive use must pass `--yes`. " \
+      "`delete` items never run under apply — `prune` walks them with a per-item confirmation."
 
     PLAN_ACTIONS_TEXT =
       "#{STATUSES.map { |name, text| "`#{name}` — #{text}" }.join('. ')}. #{APPLY_NOTE}".freeze
@@ -91,8 +94,10 @@ module CredAlignFlow
        "explicit `default` can change them."],
       ["Per-repository rules",
        "`default` follows the token defaults, `include` force-assigns the token, `exclude` blocks it on " \
-       "that repo. When a YAML rule or exclusion already applies, choosing \"Use token defaults\" writes " \
-       "an explicit `default` to cancel it rather than deleting the JSON entry."],
+       "that repo, and `delete` stops syncing it and marks any existing remote secret for removal — " \
+       "`prune` walks each marked item for confirmation before deleting. When a YAML rule or exclusion " \
+       "already applies, choosing \"Use token defaults\" writes an explicit `default` to cancel it rather " \
+       "than deleting the JSON entry."],
       ["Plan actions", PLAN_ACTIONS_TEXT],
       ["Orphan rules",
        "Saved rules for repos no longer in inventory (renamed or gone). They stay in the rules file and " \

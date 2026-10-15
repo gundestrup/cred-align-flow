@@ -39,7 +39,7 @@ class RulesTest < Minitest::Test
         [{ "version" => 1, "rules" => { "github-main" => [] } }, "mapping"],
         [{ "version" => 1, "rules" => { "github-main" => { "repo" => {} } } }, "owner/name"],
         [{ "version" => 1, "rules" => { "github-main" => { "example/repo" => { "T" => "maybe" } } } },
-         "default, include, or exclude"]
+         "default, include, exclude, or delete"]
       ]
 
       invalid.each do |content, fragment|
@@ -148,6 +148,72 @@ class RulesTest < Minitest::Test
 
         assert_includes error.message, fragment
       end
+    end
+  end
+
+  def test_stale_references_reports_dead_rules_and_defaults
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.rules.json")
+      rules = CredAlignFlow::Rules.new(
+        path,
+        data: {
+          "version" => 2,
+          "rules" => {
+            "github-main" => {
+              "example/repo" => { "SONAR_TOKEN" => "include", "GONE_TOKEN" => "exclude" }
+            },
+            "gone-source" => { "example/repo" => { "SONAR_TOKEN" => "include" } }
+          },
+          "token_defaults" => { "GONE_TOKEN" => { "visibility" => "all" } }
+        }
+      )
+
+      stale = rules.stale_references(["github-main"], ["SONAR_TOKEN"])
+
+      assert_equal 3, stale.length
+      assert_equal(
+        { "source" => "github-main", "repository" => "example/repo",
+          "secret" => "GONE_TOKEN", "rule" => "exclude", "reason" => "token not in config" },
+        stale[0]
+      )
+      assert_equal "source not in config", stale[1].fetch("reason")
+      assert_equal "SONAR_TOKEN", stale[1].fetch("secret")
+      assert_equal({ "section" => "token_defaults", "secret" => "GONE_TOKEN",
+                     "reason" => "token not in config" }, stale[2])
+      assert_empty rules.stale_references(
+        %w[github-main gone-source], %w[SONAR_TOKEN GONE_TOKEN]
+      )
+    end
+  end
+
+  def test_live_entries_and_defaults_drop_dead_references
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.rules.json")
+      rules = CredAlignFlow::Rules.new(
+        path,
+        data: {
+          "version" => 2,
+          "rules" => {
+            "github-main" => {
+              "example/repo" => { "SONAR_TOKEN" => "include", "GONE_TOKEN" => "exclude" }
+            },
+            "gone-source" => { "example/repo" => { "SONAR_TOKEN" => "include" } }
+          },
+          "token_defaults" => {
+            "SONAR_TOKEN" => { "visibility" => "all" },
+            "GONE_TOKEN" => { "visibility" => "all" }
+          }
+        }
+      )
+
+      assert_equal(
+        { "github-main" => { "example/repo" => { "SONAR_TOKEN" => "include" } } },
+        rules.live_entries(["github-main"], ["SONAR_TOKEN"])
+      )
+      assert_equal(
+        { "SONAR_TOKEN" => { "visibility" => "all" } },
+        rules.live_token_defaults(["SONAR_TOKEN"])
+      )
     end
   end
 

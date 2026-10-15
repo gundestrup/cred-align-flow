@@ -17,7 +17,7 @@ module CredAlignFlow
   # token_defaults entry may override); applying one stamps those fields
   # into a token's token_defaults entry.
   #
-  # :repos presets hold a token => "default|include|exclude" map;
+  # :repos presets hold a token => "default|include|exclude|delete" map;
   # applying one stamps those rules onto a chosen repository's per-source
   # rules entry. The "*" key is a catch-all stamped onto every configured
   # token the preset does not name explicitly.
@@ -77,7 +77,88 @@ module CredAlignFlow
       end
     end
 
+    # Entries referencing tokens or sources no longer in the config.
+    # They are inert — a missing token is never stamped and a missing
+    # source never applies — so they are reported as stale instead of
+    # failing every preview/save behind a hand cleanup. The view serves
+    # live_presets in the draft, so the next save drops them; strict
+    # validate_references! still guards what the user submits.
+    def stale_references(config)
+      @type == :repos ? stale_token_references(config) : stale_scope_references(config)
+    end
+
+    def live_presets(config)
+      @type == :repos ? live_repo_presets(config) : live_token_presets(config)
+    end
+
     private
+
+    def stale_token_references(config)
+      presets.flat_map do |preset_name, fields|
+        (fields.keys - known_token_names(config) - [ANY_TOKEN]).map do |token|
+          {
+            "section" => "preset:repos",
+            "preset" => preset_name,
+            "secret" => token,
+            "rule" => fields[token],
+            "reason" => "token not in config"
+          }
+        end
+      end
+    end
+
+    def stale_scope_references(config)
+      known = config.source_ids + %w[all]
+      presets.flat_map do |preset_name, fields|
+        stale = (Array(fields["sources"]) - known).map do |source_id|
+          stale_scope_entry(preset_name, "sources", source_id)
+        end
+        exclusions = fields["exclude_repositories"]
+        if exclusions.is_a?(Hash)
+          stale += (exclusions.keys - known).map do |source_id|
+            stale_scope_entry(preset_name, "exclude_repositories", source_id)
+          end
+        end
+        stale
+      end
+    end
+
+    def stale_scope_entry(preset_name, field, source_id)
+      {
+        "section" => "preset:tokens",
+        "preset" => preset_name,
+        "field" => field,
+        "value" => source_id,
+        "reason" => "source not in config"
+      }
+    end
+
+    # Dead token entries are removed; a preset reduced to nothing stays
+    # visible as an empty template the user can delete deliberately.
+    def live_repo_presets(config)
+      keep = known_token_names(config) + [ANY_TOKEN]
+      presets.to_h { |name, fields| [name, fields.slice(*keep)] }
+    end
+
+    def live_token_presets(config)
+      known = config.source_ids + %w[all]
+      presets.to_h do |name, fields|
+        live = fields.dup
+        if live.key?("sources")
+          live["sources"] &= known
+          live.delete("sources") if live["sources"].empty?
+        end
+        if live["exclude_repositories"].is_a?(Hash)
+          live["exclude_repositories"] = live["exclude_repositories"].slice(*known)
+          live.delete("exclude_repositories") if live["exclude_repositories"].empty?
+        end
+        [name, live]
+      end
+    end
+
+    def known_token_names(config)
+      config.secrets.filter_map { |secret| secret["name"] if secret.is_a?(Hash) }
+    end
 
     def read_existing
       return nil unless File.exist?(@path)
@@ -138,12 +219,12 @@ module CredAlignFlow
         next if Rules::ACTIONS.include?(action)
 
         raise ConfigError,
-              "#{basename} preset #{name.inspect} rule for #{token.inspect} must be default, include, or exclude"
+              "#{basename} preset #{name.inspect} rule for #{token.inspect} must be default, include, exclude, or delete"
       end
     end
 
     def validate_token_references!(config)
-      names = config.secrets.filter_map { |secret| secret["name"] if secret.is_a?(Hash) }
+      names = known_token_names(config)
       presets.each do |preset_name, fields|
         unknown = fields.keys - names - [ANY_TOKEN]
         next if unknown.empty?

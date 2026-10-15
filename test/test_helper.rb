@@ -238,6 +238,18 @@ module TestSupport
               entries.reject! { |entry| entry.fetch("name") == name }
               entries << { "name" => name, "updatedAt" => "2026-01-02T00:00:00Z" }
             end
+          when ["secret", "delete"]
+            if ENV["FAKE_GH_FAIL_DELETE"] == "1"
+              result = "synthetic delete failure\n"
+              json_output = false
+              exit_status = 1
+            else
+              key = [option_value.call("--repo"), option_value.call("--app")].join("|")
+              entries = state.fetch("secrets").fetch(key, [])
+              entries.reject! { |entry| entry.fetch("name") == arguments.fetch(2) }
+              result = ""
+              json_output = false
+            end
           else
             raise "unexpected fake gh arguments"
           end

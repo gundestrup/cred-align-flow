@@ -5,7 +5,88 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-15
+
+### Added
+
+- A `delete` repository rule (per-repo rule dropdown in the config UI,
+  `repository_rules` in YAML, and repo presets all accept it) that stops
+  syncing a token on that repository and marks any existing remote
+  secret for removal. Marks surface as `delete` plan items — never as
+  `unexpected`, never touched by `apply` — and the new `prune` command
+  walks them: it refreshes the inventory like `apply`, prints every
+  marked remote still present, then asks for one keypress per item
+  (`y` deletes, `n` skips, `c` or any other key including EOF stops the
+  run); noninteractive use must pass `--yes`. Deletion needs no local
+  secret value, re-verifies repository/source identity and remote
+  presence against the live provider before removing, and clears the
+  applied journal entry so a deleted secret cannot masquerade as a live
+  application. Provider capability decides what is deletable: GitHub
+  contexts via `gh secret delete` and Forgejo repository `actions`
+  secrets via the API are deletable (pull-only refers to value writes),
+  while Forgejo's write-only `user` scope reports the mark as
+  undeletable. Secrets that merely stop being configured stay
+  report-only `unexpected` — deletion always requires an explicit mark.
+
+### Changed
+
+- Rules-file entries that reference tokens or sources removed from the
+  YAML config no longer fail the load — they are inert (a deleted token
+  can never appear in a plan), so commands warn on stderr and carry on.
+  The config UI reports them in the orphan notice with their reason and
+  drops them from the draft on the next save, so a manually edited
+  config cannot wedge `scaffold`, `plan`, or the UI behind a rules-file
+  cleanup. The same treatment now applies to preset-library entries that
+  name removed tokens (repo presets) or sources (token presets):
+  previously every `/api/preview` and `/api/save` returned 422, leaving
+  draft changes — like Clear repository rules — looking applied but
+  unsavable. Reference validation stays strict on save: a draft naming
+  an unknown token or source is still rejected.
+- Bulk `scaffold` imports (`scaffold_action: import`/`auto`, or `--only`
+  without `--target`) now warn and skip env names that can never be
+  valid managed secrets — invalid charset, over 100 characters, or the
+  reserved `GITHUB_` prefix — instead of aborting the whole batch on the
+  first unimportable name. The default list-only output annotates such
+  names, the config UI lists them separately under "Cannot be
+  imported", and explicit `--target` imports of an invalid name still
+  fail.
+- `scaffold_action: auto` now writes minimal **inactive** entries:
+  identity fields plus an explicit empty `targets` list per configured
+  provider type, so imported tokens are assigned nowhere and plan/apply
+  nothing until scope is granted through the config UI
+  (`token_defaults`, presets, or repository rules — the overlay wins
+  over the empty YAML targets). Previously auto-imported tokens were
+  live on all sources with each provider's implicit context, which
+  pushed secrets to every selected repository by default. The scope
+  editor's Targets field now notes when no context is selected
+  ("enables nothing until at least one is checked") so an inactive
+  token or preset is readable at a glance.
+
+### Fixed
+
+- The config UI no longer dies with `Cannot read properties of
+  undefined (reading 'revision')` when the YAML config fails to load
+  (e.g. a syntax error): action buttons surface the real load error and
+  skip the request while the page is viewless, and the poll loop keeps
+  retrying so the page recovers automatically once the config parses.
+- Saving now stays enabled while dead orphan rules exist on disk —
+  previously a clean draft disabled Save entirely, leaving no way to
+  trigger the cleanup write that drops them.
+- The status message now lives inside the sticky actions bar, so
+  validation errors and action confirmations stay visible while
+  scrolled to a token or repository far down the page — previously an
+  invalid draft disabled Save with the reason rendered off-screen.
+- The scope editor no longer offers owner-scope target checkboxes
+  (e.g. `forgejo: user`) the draft could never satisfy: when the
+  applicable sources of that provider type lack the account-scope
+  opt-in (`user_secrets: true`), the box is disabled and names the
+  sources that need it, instead of letting the preview reject the
+  draft after the fact. Tokens targeting only account scope now say so
+  in the assignment list rather than "Not assigned to any repository".
+- The config UI's API now echoes 4xx/5xx request errors to stderr
+  (`[config-ui] POST /api/preview -> 422: …`) so a stuck draft can be
+  diagnosed from the terminal that launched `ui` — previously the
+  error text only existed inside the HTTP response.
 
 ## [0.1.0] - 2026-10-15
 
@@ -207,6 +288,7 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.2.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.1.0
 [0.0.4]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.4
 [0.0.3]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.3

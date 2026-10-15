@@ -221,7 +221,7 @@ class ScaffolderTest < Minitest::Test
     end
   end
 
-  def test_auto_mode_imports_minimal_active_entries_under_the_token_defaults
+  def test_auto_mode_imports_minimal_inactive_entries_until_scope_is_assigned
     with_config do |_dir, path|
       config = CredAlignFlow::Config.new(path)
       env = { "NEW_TOKEN" => "synthetic-value" }
@@ -231,17 +231,20 @@ class ScaffolderTest < Minitest::Test
 
       assert_includes text, "# scaffold: NEW_TOKEN"
       assert_includes text, "  - name: \"NEW_TOKEN\""
-      assert_includes text, "imported and activated under the token defaults"
+      assert_includes text, "imported inactive; assign scope in the config UI to enable"
 
       scoped = CredAlignFlow::Config.new(path)
       secret = scoped.secrets.find { |entry| entry["name"] == "NEW_TOKEN" }
 
       assert_equal(
-        %w[name value_env value_digest version version_at],
+        %w[name value_env value_digest version version_at targets],
         secret.keys
       )
-      assert_equal "assigned_default", scoped.secret_assignment(secret, "github-main", TestSupport.repository_metadata).first
-      assert_equal ["actions"], scoped.contexts_for(secret, "github-main")
+      # Every configured provider type is listed with no enabled context,
+      # so the token plans nothing anywhere until token_defaults/rules
+      # grant scope.
+      assert_equal({ "github" => [] }, secret["targets"])
+      assert_empty scoped.contexts_for(secret, "github-main")
     end
   end
 
@@ -311,6 +314,63 @@ class ScaffolderTest < Minitest::Test
       assert_includes text, "      # \"github-main\": [\"*\"]"
       assert_includes text, "        # \"example/repo\": include"
       assert_equal 1, CredAlignFlow::Config.new(path).secrets.length
+    end
+  end
+
+  def test_bulk_import_skips_names_that_can_never_be_managed_secrets
+    with_config do |_dir, path|
+      config = CredAlignFlow::Config.new(path)
+      env = { "NEW_TOKEN" => "x", "GITHUB_TOKEN" => "x", "bad-name" => "x" }
+
+      result = CredAlignFlow::Scaffolder.new(path).apply!(
+        %w[NEW_TOKEN GITHUB_TOKEN bad-name], config, env, mode: :auto
+      )
+      text = File.read(path)
+
+      assert_equal ["NEW_TOKEN"], result.fetch("added")
+      assert_equal(
+        {
+          "GITHUB_TOKEN" => "uses the reserved GITHUB_ prefix",
+          "bad-name" => "must be uppercase letters, digits, and underscores " \
+                        "(providers store secret names uppercase)"
+        },
+        result.fetch("unimportable")
+      )
+      assert_includes text, "- name: \"NEW_TOKEN\""
+      refute_includes text, "GITHUB_TOKEN"
+      refute_includes text, "bad-name"
+      assert_equal 2, CredAlignFlow::Config.new(path).secrets.length
+    end
+  end
+
+  def test_bulk_import_of_only_unimportable_names_writes_nothing
+    with_config do |_dir, path|
+      config = CredAlignFlow::Config.new(path)
+      original = File.binread(path)
+
+      result = CredAlignFlow::Scaffolder.new(path).apply!(
+        ["GITHUB_TOKEN"], config, { "GITHUB_TOKEN" => "x" }, mode: :auto
+      )
+
+      assert_empty result.fetch("added")
+      assert_equal "uses the reserved GITHUB_ prefix", result.fetch("unimportable").fetch("GITHUB_TOKEN")
+      assert_equal original, File.binread(path)
+    end
+  end
+
+  def test_targeted_import_still_fails_on_reserved_names
+    with_config do |_dir, path|
+      config = CredAlignFlow::Config.new(path)
+      original = File.binread(path)
+
+      error = assert_raises(CredAlignFlow::ConfigError) do
+        CredAlignFlow::Scaffolder.new(path).apply!(
+          ["GITHUB_TOKEN"], config, { "GITHUB_TOKEN" => "x" }, targets: target_scope
+        )
+      end
+
+      assert_includes error.message, "reserved GITHUB_ prefix"
+      assert_equal original, File.binread(path)
     end
   end
 

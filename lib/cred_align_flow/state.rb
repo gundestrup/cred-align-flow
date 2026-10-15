@@ -95,6 +95,21 @@ module CredAlignFlow
       @data["applied"]["#{source_id}|#{identity.delete_prefix('name:')}|#{context}|#{secret_name}"]
     end
 
+    def unmark_remote_secret(source_id, repo_name, context, secret_name)
+      source_repositories(source_id).dig(repo_name, "remote_secrets", context)&.delete(secret_name)
+    end
+
+    # Drops the applied journal entry for a secret — used after a remote
+    # delete so the record cannot masquerade as a live application. The
+    # same legacy-name fallback applied_record consults is cleaned too.
+    def forget_application(source_id, repo, context, secret_name)
+      identity = repo_identity(repo)
+      @data["applied"].delete(application_key(source_id, identity, context, secret_name))
+      return unless identity.start_with?("name:")
+
+      @data["applied"].delete("#{source_id}|#{identity.delete_prefix('name:')}|#{context}|#{secret_name}")
+    end
+
     # `applied_remote_at` is the provider's own `updated_at` observed right
     # after the write — drift checks compare remote timestamps against it,
     # so local clock skew cannot hide an external remote change. Records

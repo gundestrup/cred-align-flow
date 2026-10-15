@@ -24,8 +24,8 @@ state_file: ~/.local/state/cred-align-flow/inventory.json
 # What `scaffold` does with unimported env names when no --target is
 # given: default only lists them in the UI/CLI, import writes them as
 # commented full-field draft entries to uncomment/edit later, auto
-# writes minimal active entries under the token defaults (adjust scope
-# via the UI or by hand).
+# writes minimal inactive entries — they are assigned nowhere until the
+# config UI grants scope through token defaults or rules.
 # scaffold_action: default
 
 sources:
@@ -81,7 +81,7 @@ secrets:
     # exclude_sources: [source-id]        # hard lock: token never reaches these sources
     # exclude_repositories:               # flat list, or per-source map (legacy alias: exclude_repos)
     #   github-main: ["owner/repo"]
-    # repository_rules:                   # per-source owner/repo overrides: include | exclude | default
+    # repository_rules:                   # per-source owner/repo overrides: include | exclude | delete | default
     #   github-main:
     #     "owner/repo": include
 

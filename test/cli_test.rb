@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "test_helper"
+require "stringio"
 require "yaml"
 
 # End-to-end CLI coverage through the real bin/cred-align-flow executable with a
@@ -135,6 +136,25 @@ class CliTest < Minitest::Test
     end
   end
 
+  def test_stale_rules_warn_instead_of_failing_the_load
+    with_workspace do |workspace|
+      rules_path = CredAlignFlow::Rules.default_path_for(workspace.fetch(:config_path))
+      File.write(rules_path, JSON.generate(
+                               "version" => 1,
+                               "rules" => {
+                                 "github-main" => { "example/repo" => { "GONE_TOKEN" => "include" } }
+                               }
+                             ))
+
+      stdout, stderr, status = invoke(workspace, "scaffold")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stderr, "stale rule"
+      assert_includes stderr, File.basename(rules_path)
+      refute_includes stdout + stderr, TEST_SECRET_VALUE
+    end
+  end
+
   def test_scaffold_requires_explicit_names_and_exact_targets
     with_workspace do |workspace|
       stdout, stderr, status = invoke(workspace, "scaffold")
@@ -198,13 +218,13 @@ class CliTest < Minitest::Test
     end
   end
 
-  def test_scaffold_action_auto_imports_and_activates_unmanaged_names
+  def test_scaffold_action_auto_imports_inactive_minimal_entries
     with_workspace do |workspace|
       File.open(workspace.fetch(:config_path), "a") { |file| file.puts "scaffold_action: auto" }
       stdout, stderr, status = invoke(workspace, "scaffold")
 
       assert_predicate status, :success?, stderr
-      assert_includes stdout, "under the token defaults"
+      assert_includes stdout, "inactive"
 
       config = CredAlignFlow::Config.new(workspace.fetch(:config_path))
       entry = config.secrets.find { |secret| secret["name"] == "UNMANAGED_TOKEN" }
@@ -212,9 +232,10 @@ class CliTest < Minitest::Test
       refute_nil entry
       refute entry.key?("visibility")
       refute entry.key?("sources")
-      refute entry.key?("targets")
       refute entry.key?("exclude_repositories")
       refute entry.key?("repository_rules")
+      assert_equal({ "github" => [] }, entry["targets"])
+      assert_empty config.contexts_for(entry, "github-main")
       refute_includes stdout + stderr, "extra-payload"
     end
   end
@@ -243,16 +264,43 @@ class CliTest < Minitest::Test
     end
   end
 
-  def test_scaffold_action_auto_keeps_only_without_target_active
+  def test_scaffold_action_auto_only_without_target_imports_inactive
     with_workspace do |workspace|
       File.open(workspace.fetch(:config_path), "a") { |file| file.puts "scaffold_action: auto" }
       _stdout, stderr, status = invoke(workspace, "scaffold", extra_args: ["--only", "UNMANAGED_TOKEN"])
 
       assert_predicate status, :success?, stderr
-      assert_equal(
-        "UNMANAGED_TOKEN",
-        CredAlignFlow::Config.new(workspace.fetch(:config_path)).secrets.last["name"]
-      )
+      entry = CredAlignFlow::Config.new(workspace.fetch(:config_path)).secrets.last
+
+      assert_equal "UNMANAGED_TOKEN", entry["name"]
+      assert_equal({ "github" => [] }, entry["targets"])
+    end
+  end
+
+  def test_scaffold_auto_skips_unimportable_names_and_imports_the_rest
+    with_workspace(extra_env: { "UNMANAGED_TOKEN" => "extra-payload", "GITHUB_TOKEN" => "x" }) do |workspace|
+      File.open(workspace.fetch(:config_path), "a") { |file| file.puts "scaffold_action: auto" }
+      stdout, stderr, status = invoke(workspace, "scaffold")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stderr, "skipping env name GITHUB_TOKEN: uses the reserved GITHUB_ prefix"
+      assert_includes stdout, "UNMANAGED_TOKEN"
+      refute_includes stdout, "  GITHUB_TOKEN"
+
+      config = CredAlignFlow::Config.new(workspace.fetch(:config_path))
+
+      assert_equal "UNMANAGED_TOKEN", config.secrets.last["name"]
+      refute(config.secrets.any? { |secret| secret["name"] == "GITHUB_TOKEN" })
+    end
+  end
+
+  def test_scaffold_default_listing_annotates_unimportable_names
+    with_workspace(extra_env: { "UNMANAGED_TOKEN" => "x", "GITHUB_TOKEN" => "x" }) do |workspace|
+      stdout, stderr, status = invoke(workspace, "scaffold")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stdout, "UNMANAGED_TOKEN"
+      assert_includes stdout, "GITHUB_TOKEN (cannot be imported: uses the reserved GITHUB_ prefix)"
     end
   end
 
@@ -314,7 +362,90 @@ class CliTest < Minitest::Test
     end
   end
 
+  def test_prune_deletes_marked_remote_secrets_with_yes
+    with_workspace do |workspace|
+      _stdout, stderr, status = invoke(workspace, "apply", "--yes")
+
+      assert_predicate status, :success?, stderr
+      rules_path = CredAlignFlow::Rules.default_path_for(workspace.fetch(:config_path))
+      File.write(rules_path, JSON.generate(
+                               "version" => 1,
+                               "rules" => {
+                                 "github-main" => { "example/repo" => { "SYNC_TOKEN" => "delete" } }
+                               }
+                             ))
+
+      _stdout, stderr, status = invoke(workspace, "prune")
+
+      assert_equal 1, status.exitstatus
+      assert_includes stderr, "prune requires --yes"
+      assert_equal "SYNC_TOKEN", fake_gh_secret_names(workspace, "example/repo", "actions").first
+
+      stdout, stderr, status = invoke(workspace, "prune", "--yes")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stdout, "delete"
+      assert_includes stdout, "deleted github-main example/repo SYNC_TOKEN (actions)"
+      assert_includes stdout, "Prune: 1 deleted"
+      assert_empty fake_gh_secret_names(workspace, "example/repo", "actions")
+
+      state = JSON.parse(File.read(workspace.fetch(:state_path)))
+      repo_node = state.dig("sources", "github-main", "repositories", "example/repo")
+
+      assert_empty repo_node.dig("remote_secrets", "actions") || {}
+      assert_empty(state.fetch("applied", {}).keys.grep(/SYNC_TOKEN/))
+      refute_includes stdout + stderr, TEST_SECRET_VALUE
+
+      # Once the remote is gone, the mark is satisfied and prune is clean.
+      stdout, _stderr, status = invoke(workspace, "prune", "--yes")
+
+      assert_predicate status, :success?
+      assert_includes stdout, "No remote secrets are marked"
+    end
+  end
+
+  def test_prune_without_marks_is_a_noop
+    with_workspace do |workspace|
+      _stdout, stderr, status = invoke(workspace, "inventory")
+
+      assert_predicate status, :success?, stderr
+      stdout, _stderr, status = invoke(workspace, "prune", "--yes")
+
+      assert_predicate status, :success?
+      assert_includes stdout, "No remote secrets are marked"
+    end
+  end
+
+  def test_confirm_delete_keypresses
+    item = CredAlignFlow::Planner::Item.new(
+      action: "delete", source: "github-main", repository: "example/repo",
+      context: "actions", secret: "SYNC_TOKEN"
+    )
+    cli = CredAlignFlow::CLI.new
+    {
+      "y" => :yes,
+      "Y" => :yes,
+      "n" => :skip,
+      "c" => :cancel,
+      "x" => :cancel,
+      "\n" => :cancel,
+      "" => :cancel
+    }.each do |keys, expected|
+      output = StringIO.new
+
+      assert_equal expected, cli.send(:confirm_delete, item, input: StringIO.new(keys), output: output),
+                   "keypress #{keys.inspect} should produce #{expected}"
+      assert_includes output.string, "SYNC_TOKEN"
+    end
+  end
+
   private
+
+  def fake_gh_secret_names(workspace, repository, context)
+    workspace.fetch(:fake_gh).state.fetch("secrets").fetch("#{repository}|#{context}", []).map do |entry|
+      entry.fetch("name")
+    end
+  end
 
   def with_workspace(extra_env: { "UNMANAGED_TOKEN" => "extra-payload" })
     Dir.mktmpdir("cred-align-flow-cli-test") do |directory|

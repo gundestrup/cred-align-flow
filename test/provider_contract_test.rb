@@ -54,6 +54,11 @@ class ProviderContractTest < Minitest::Test
     assert_equal %w[actions user], forgejo.contexts
     refute_predicate forgejo, :writable?
     refute forgejo.writable?("user")
+    # Pull-only for writes still allows explicit deletes at repo scope;
+    # the write-only account scope can never be deleted.
+    assert forgejo.deletable?("actions")
+    refute forgejo.deletable?("user")
+    assert adapter.deletable?("actions")
   end
 
   def test_forgejo_owner_scope_writes_require_the_source_opt_in
@@ -92,6 +97,7 @@ class ProviderContractTest < Minitest::Test
     assert_includes error.message, "repository"
     assert_includes error.message, "secrets"
     assert_includes error.message, "set_secret"
+    assert_includes error.message, "delete_secret"
   end
 
   def test_adapter_must_declare_supported_contexts
@@ -109,6 +115,10 @@ class ProviderContractTest < Minitest::Test
       end
 
       def set_secret(_repository, _context, _name, _value)
+        true
+      end
+
+      def delete_secret(_repository, _context, _name)
         true
       end
     end
@@ -168,12 +178,14 @@ class ProviderContractTest < Minitest::Test
     assert_raises(NotImplementedError) { provider.repository("example/repo") }
     assert_raises(NotImplementedError) { provider.secrets("example/repo", "actions") }
     assert_raises(NotImplementedError) { provider.set_secret("example/repo", "actions", "TOKEN", "value") }
+    assert_raises(NotImplementedError) { provider.delete_secret("example/repo", "actions", "TOKEN") }
   end
 
   def test_base_provider_defaults
     provider = CredAlignFlow::Provider.new
 
     assert_predicate provider, :writable?
+    assert provider.deletable?("actions")
     refute_predicate provider, :owner_scope_writable?
     refute CredAlignFlow::Provider.owner_scope_writable?({})
     refute provider.owner_scoped_context?("user")
@@ -205,6 +217,7 @@ class ProviderContractTest < Minitest::Test
       adapter.define_method(:repository) { |_name| {} }
       adapter.define_method(:secrets) { |_repository, _context| [] }
       adapter.define_method(:set_secret) { |_repository, _context, _name, _value| true }
+      adapter.define_method(:delete_secret) { |_repository, _context, _name| true }
     end
   end
 end

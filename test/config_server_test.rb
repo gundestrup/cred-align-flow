@@ -248,6 +248,55 @@ class ConfigServerTest < Minitest::Test
     assert_includes stdout, "Saved locally" if stdout
   end
 
+  def test_ui_actions_survive_a_failed_initial_load
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_view_required_before_actions(script) }
+      (async () => {
+        // The config fails to parse: /api/data answers 422 and `view`
+        // stays unset. Action buttons must surface the load error instead
+        // of dereferencing view.revision.
+        pending[0]({ ok: false, status: 422, json: async () => ({ error: "Invalid config YAML: could not find expected ':'" }) });
+        await new Promise((resolve) => setImmediate(resolve));
+        // Tick rather than await the handler: a regression that issues a
+        // fetch must fail the assertion, not hang on a pending request.
+        elements.get("refresh-inventory")._handlers.click();
+        await new Promise((resolve) => setImmediate(resolve));
+        if (pending.length !== 1) throw new Error("a request was issued without a loaded view");
+        let message = elements.get("message").textContent;
+        if (!message.includes("Invalid config YAML")) throw new Error(`load error was hidden by: ${message}`);
+        elements.get("save")._handlers.click();
+        await new Promise((resolve) => setImmediate(resolve));
+        message = elements.get("message").textContent;
+        if (!message.includes("Invalid config YAML")) throw new Error(`save hid the load error: ${message}`);
+        process.stdout.write(message);
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    assert_includes stdout, "reloads automatically" if stdout
+  end
+
+  def test_ui_dead_orphans_enable_a_cleanup_save
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_dead_orphans_keep_save_enabled(script) }
+      (async () => {
+        const initial = view("initial");
+        initial.orphan_rules = [
+          { section: "token_defaults", secret: "GONE_TOKEN", reason: "token not in config" }
+        ];
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        // A clean draft plus dead orphans must still leave Save usable —
+        // it is the only way the stale file entries get dropped.
+        if (elements.get("save").disabled) throw new Error("save stayed disabled with dead orphans on disk");
+        const save = elements.get("save")._handlers.click();
+        pending[1]({ ok: true, status: 200, json: async () => view("saved") });
+        await save;
+        if (!elements.get("save").disabled) throw new Error("save stayed enabled after the cleanup save");
+        process.stdout.write("ok");
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    assert_equal "ok", stdout if stdout
+  end
+
   def test_ui_repo_preset_stamps_rules_with_catchall_and_lock_handling
     stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_repo_preset_stamping(script) }
       (async () => {
@@ -480,6 +529,160 @@ class ConfigServerTest < Minitest::Test
     )
   end
 
+  def test_ui_targets_checked_keeps_empty_targets_inert
+    stdout = run_ui_scenario(<<~JAVASCRIPT)
+      (async () => {
+        const inert = { targets: { github: [], forgejo: [] } };
+        const outcome = {
+          inert_github: sandbox.targetsChecked(inert, "github"),
+          inert_forgejo: sandbox.targetsChecked(inert, "forgejo"),
+          absent_github: sandbox.targetsChecked({}, "github"),
+          absent_forgejo: sandbox.targetsChecked({}, "forgejo")
+        };
+        process.stdout.write(JSON.stringify(outcome));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    assert_equal(
+      {
+        "inert_github" => [],
+        "inert_forgejo" => [],
+        "absent_github" => ["actions"],
+        "absent_forgejo" => []
+      },
+      JSON.parse(stdout)
+    )
+    assert_includes extract_browser_script, "enables nothing until at least one is checked"
+  end
+
+  def test_ui_owner_scope_targets_are_gated_by_source_opt_in
+    stdout = run_ui_scenario(<<~JAVASCRIPT) { |script| assert_owner_scope_gating(script) }
+      (async () => {
+        const initial = view("initial");
+        initial.provider_contexts = { forgejo: ["actions", "user"], github: ["actions"] };
+        initial.owner_contexts = { forgejo: ["user"] };
+        initial.sources = [
+          { id: "forgejo-main", type: "forgejo", owner_scope_writable: false },
+          { id: "forgejo-alt", type: "forgejo", owner_scope_writable: true },
+          { id: "github-main", type: "github", owner_scope_writable: true }
+        ];
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        process.stdout.write(JSON.stringify({
+          all_blocked: sandbox.ownerScopeBlockedSources({}, "forgejo"),
+          opted_in_only: sandbox.ownerScopeBlockedSources({ sources: ["forgejo-alt"] }, "forgejo"),
+          other_type_only: sandbox.ownerScopeBlockedSources({ sources: ["github-main"] }, "forgejo"),
+          github_type: sandbox.ownerScopeBlockedSources({}, "github"),
+          owner_only: sandbox.ownerScopeOnly({ targets: { forgejo: ["user"], github: [] } }),
+          mixed: sandbox.ownerScopeOnly({ targets: { forgejo: ["user", "actions"], github: [] } }),
+          none: sandbox.ownerScopeOnly({ targets: { forgejo: [], github: [] } })
+        }));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    assert_equal(
+      {
+        "all_blocked" => %w[forgejo-main],
+        "opted_in_only" => [],
+        "other_type_only" => [],
+        "github_type" => [],
+        "owner_only" => true,
+        "mixed" => false,
+        "none" => false
+      },
+      JSON.parse(stdout)
+    )
+  end
+
+  def test_ui_status_message_lives_inside_the_sticky_actions_bar
+    html = File.read(File.expand_path("../lib/cred_align_flow/config_ui.html", __dir__), encoding: "UTF-8")
+    css = File.read(File.expand_path("../lib/cred_align_flow/config_ui.css", __dir__), encoding: "UTF-8")
+
+    actions = html[%r{<div class="actions">.*?</div>}m]
+
+    assert_includes actions, 'id="message"'
+    assert_includes css, ".actions { position: sticky"
+    assert_includes css, ".message:empty"
+  end
+
+  def test_rack_app_logs_error_responses_to_stderr
+    with_rack_app do |app, _config_path, _checker|
+      _status, _h, data_body = call(app, "GET", "/api/data")
+      view = JSON.parse(data_body.join)
+      result = nil
+      _out, err = capture_io do
+        result = call(
+          app, "POST", "/api/preview", origin: "http://127.0.0.1:8043", token: view.fetch("csrf"),
+                                       body: JSON.generate(
+                                         "revision" => view.fetch("revision"),
+                                         "rules" => {},
+                                         "token_defaults" => { "GONE_TOKEN" => { "targets" => { "github" => %w[actions] } } },
+                                         "token_presets" => {},
+                                         "repo_presets" => {}
+                                       )
+        )
+      end
+
+      assert_equal 422, result.first
+      assert_includes err, "[config-ui] POST /api/preview -> 422"
+      assert_includes err, "GONE_TOKEN"
+    end
+  end
+
+  def test_ui_clear_token_rules_removes_saved_rules_for_the_token
+    stdout = run_ui_scenario(<<~JAVASCRIPT)
+      (async () => {
+        const initial = view("initial");
+        initial.secrets = [{ config: { name: "DEPLOY_SSH_KEY" } }];
+        initial.rules = {
+          "github-main": {
+            "example/repo": { "DEPLOY_SSH_KEY": "exclude", "OTHER_TOKEN": "exclude" },
+            "example/other": { "DEPLOY_SSH_KEY": "exclude" }
+          }
+        };
+        const repoRow = (name) => ({
+          name, selected: true,
+          rule_sources: { DEPLOY_SSH_KEY: "rules", OTHER_TOKEN: "rules" },
+          rule_modes: { DEPLOY_SSH_KEY: "exclude", OTHER_TOKEN: "exclude" },
+          legacy_exclusions: {}, locked_sources: {}, crosses_scope: {},
+          assigned: [], not_assigned: [], unexpected: []
+        });
+        initial.sources = [{
+          id: "github-main",
+          repositories: [repoRow("example/repo"), repoRow("example/other")]
+        }];
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        sandbox.clearTokenRules("DEPLOY_SSH_KEY");
+        const clearedMessage = elements.get("message").textContent;
+        const save = elements.get("save")._handlers.click();
+        pending[1]({ ok: true, status: 200, json: async () => view("saved") });
+        await save;
+        const body = bodies[requests.indexOf("/api/save")];
+        process.stdout.write(JSON.stringify({
+          rules: body.rules,
+          message: clearedMessage
+        }));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    result = JSON.parse(stdout)
+
+    # Only the token's own rules are cleared; OTHER_TOKEN stays.
+    assert_equal(
+      { "github-main" => { "example/repo" => { "OTHER_TOKEN" => "exclude" } } },
+      result.fetch("rules")
+    )
+    assert_equal "Cleared 2 repository rule(s) for DEPLOY_SSH_KEY — press Save to write the rules file.",
+                 result.fetch("message")
+  end
+
   def test_ui_lock_rejects_a_second_instance
     Dir.mktmpdir do |dir|
       editor = Struct.new(:config_path).new(File.join(dir, "config.yml"))
@@ -676,6 +879,7 @@ class ConfigServerTest < Minitest::Test
         token_defaults: {}, token_presets: {}, repo_presets: {},
         check_for_updates: checkForUpdates,
         secrets: [], sources: [], orphan_rules: [], unimported_env_names: [],
+        unimportable_env_names: {},
         ignored_env_names: [], action_summary: {}, provider_contexts: {},
         meta: { statuses: ["ok", "create"], status_help: {}, value_pills: {},
                 field_help: [{ term: "T", text: "uses `code` spans" }] }
@@ -740,6 +944,30 @@ class ConfigServerTest < Minitest::Test
     assert_match(/status === 403/, post)
     assert_includes post, "refreshCsrfToken"
     assert_includes post, "return post(path, body)"
+  end
+
+  def assert_view_required_before_actions(script)
+    assert_includes script, "function requireView()"
+    save = script[/async function saveChanges\(\) \{.*?\n    \}/m]
+    refresh = script[/async function refreshInventory\(\) \{.*?\n    \}/m]
+
+    assert_includes save, "requireView()"
+    assert_includes refresh, "requireView()"
+  end
+
+  def assert_dead_orphans_keep_save_enabled(script)
+    buttons = script[/function updateButtons\(\) \{.*?\n    \}/m]
+
+    assert(buttons)
+    assert_includes buttons, "hasDeadOrphans()"
+    assert_includes script, "!orphan.removable"
+  end
+
+  def assert_owner_scope_gating(script)
+    assert_includes script, "function ownerScopeBlockedSources(fields, type)"
+    assert_includes script, "owner_scope_writable"
+    assert_includes script, "box.disabled = true"
+    assert_includes script, "function ownerScopeOnly(fields)"
   end
 
   def assert_repo_preset_stamping(script)

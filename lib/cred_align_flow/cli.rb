@@ -1,12 +1,13 @@
 # frozen_string_literal: true
 
 require "digest"
+require "io/console"
 require "json"
 require "optparse"
 
 module CredAlignFlow
   class CLI
-    COMMANDS = %w[doctor inventory pull plan diff check apply ui scaffold help].freeze
+    COMMANDS = %w[doctor inventory pull plan diff check apply prune ui scaffold help].freeze
 
     def run(argv)
       return puts(VERSION) || 0 if contains_global_flag?(argv, %w[--version -v])
@@ -45,6 +46,8 @@ module CredAlignFlow
         return run_plan_command(command, config, state, env_values, options)
       when "apply"
         return run_apply(config, state, env_values, options)
+      when "prune"
+        return run_prune(config, state, env_values, options)
       end
 
       0
@@ -110,6 +113,111 @@ module CredAlignFlow
       verify_plan_inputs!(config, @env_path, state.path, plan_revision)
       outcomes = Applier.new(config, state, env_values).apply(actionable, force: options[:force])
       report_outcomes(outcomes, blockers: blockers)
+    end
+
+    # Executes only the "delete" plan items — remote secrets marked for
+    # removal by repository rules (the UI's `delete` rule option or YAML
+    # `repository_rules`). The inventory is refreshed exactly like `apply`
+    # so the printed list matches live remotes. Every item then gets its
+    # own single-key confirmation: y deletes, n skips, c (or any other
+    # input, including EOF) stops the walk — a stray keystroke must never
+    # delete. Noninteractive runs must pass --yes, which approves every
+    # printed deletion. Write items are never touched here.
+    def run_prune(config, state, env_values, options)
+      refresh_inventory(config, state, env_values, source_filter: options[:source],
+                                                   context_filter: options[:context])
+      state = State.new(state.path)
+      ensure_inventory!(config, state, source_filter: options[:source], context_filter: options[:context])
+      verify_loaded_inputs!(config, @env_path)
+      plan_revision = input_revision(config, @env_path, state.path)
+      planner = build_planner(config, state, env_values, options)
+      plan = planner.plan
+      validate_repo_filter!(options, config, state)
+
+      marked = plan.select { |item| item.action == "delete" }
+      if marked.empty?
+        puts "No remote secrets are marked for deletion by repository rules."
+        return 0
+      end
+
+      deletable, blocked = marked.partition { |item| provider_deletable?(config, item) }
+      print_items(marked)
+      blocked.each do |item|
+        puts "undeletable #{item.source} #{item.repository} #{item.context} #{item.secret}: " \
+             "the provider cannot delete secrets in this context"
+      end
+      return blocked.empty? ? 0 : 1 if deletable.empty?
+
+      unless options[:yes] || $stdin.tty?
+        warn "prune requires --yes when stdin is not interactive"
+        return 1
+      end
+
+      verify_plan_inputs!(config, @env_path, state.path, plan_revision)
+      applier = Applier.new(config, state, env_values)
+      confirm_prune_walk(deletable, applier, config, assume_yes: options[:yes])
+    end
+
+    # Walks the marked items one at a time. `n` skips a single item, a
+    # failure is reported and the walk continues, and a cancel stops it —
+    # the untouched remainder counts as left marked. Each delete first
+    # re-verifies that the local inputs (including the rules file holding
+    # the marks) did not change mid-walk.
+    def confirm_prune_walk(deletable, applier, config, assume_yes:)
+      deleted = 0
+      skipped = 0
+      failed = 0
+      cancelled = false
+      deletable.each do |item|
+        decision = assume_yes ? :yes : confirm_delete(item)
+        if decision == :skip
+          skipped += 1
+          next
+        end
+        if decision == :cancel
+          cancelled = true
+          break
+        end
+
+        verify_loaded_inputs!(config, @env_path)
+        outcome = applier.delete_item(item)
+        case outcome.status
+        when "applied"
+          deleted += 1
+          puts "deleted #{outcome.item.source} #{outcome.item.repository} #{outcome.item.secret} (#{outcome.item.context})"
+        when "skipped"
+          skipped += 1
+          puts "skipped #{outcome.item.repository} #{outcome.item.secret}: #{outcome.detail}"
+        else
+          failed += 1
+          puts "FAILED #{outcome.item.repository} #{outcome.item.secret}: #{outcome.detail}"
+        end
+      end
+      skipped += deletable.length - deleted - skipped - failed
+      puts "Prune: #{deleted} deleted" \
+           "#{"; #{skipped} left marked" unless skipped.zero?}" \
+           "#{"; #{failed} failed" unless failed.zero?}" \
+           "#{' (stopped early)' if cancelled}."
+      failed.zero? ? 0 : 1
+    end
+
+    # One keypress per marked secret: y deletes, n skips, anything else —
+    # including c, Enter, and EOF — stops the walk. A stray keystroke must
+    # never delete.
+    def confirm_delete(item, input: $stdin, output: $stdout)
+      output.print "Delete #{item.secret} from #{item.source} #{item.repository} (#{item.context})? [y/n/c] "
+      output.flush
+      choice = (input.respond_to?(:getch) ? input.getch : input.getc).to_s.downcase
+      output.puts choice
+      return :yes if choice == "y"
+      return :skip if choice == "n"
+
+      :cancel
+    end
+
+    def provider_deletable?(config, item)
+      adapter = Providers.adapter_for(config.source(item.source)["type"])
+      adapter.nil? || adapter.deletable?(item.context)
     end
 
     def contains_global_flag?(argv, flags)
@@ -205,10 +313,10 @@ module CredAlignFlow
     end
 
     def register_filter_options(opts, options, command)
-      if %w[inventory pull plan diff check apply].include?(command)
+      if %w[inventory pull plan diff check apply prune].include?(command)
         opts.on("--source PATTERN", "Limit to matching source names") { |value| options[:source] = value }
       end
-      return unless %w[plan diff check apply].include?(command)
+      return unless %w[plan diff check apply prune].include?(command)
 
       opts.on("--repo PATTERN", "Limit to matching repository names") { |value| options[:repo] = value }
       opts.on("--secret PATTERN", "Limit to matching secret names") { |value| options[:secret] = value }
@@ -219,6 +327,7 @@ module CredAlignFlow
       opts.on("--offline", "Use cached inventory") { options[:offline] = true } if %w[plan diff check].include?(command)
       opts.on("--strict", "Treat unexpected remote secrets as failures") { options[:strict] = true } if command == "check"
       opts.on("--verify", "Also probe provider authentication/connectivity") { options[:verify] = true } if command == "doctor"
+      opts.on("--yes", "Approve every printed deletion without prompting") { options[:yes] = true } if command == "prune"
       register_apply_options(opts, options) if command == "apply"
       register_scaffold_options(opts, options) if command == "scaffold"
     end
@@ -253,6 +362,7 @@ module CredAlignFlow
     def load_context(options)
       config_path = options[:config] || Config.default_path
       config = Config.new(config_path)
+      warn_stale_rules(config)
       env_path = File.expand_path(options[:env_file] || config.env_path)
       state_path = File.expand_path(options[:state] || config.state_file)
       config.validate_runtime_paths!(env_path: env_path, state_path: state_path)
@@ -268,6 +378,18 @@ module CredAlignFlow
       env_values = Dotenv.load(env_path)
       verify_loaded_inputs!(config, env_path)
       [config, state, env_values]
+    end
+
+    # Rules for tokens or sources removed from the YAML can never fire,
+    # so they are reported instead of failing the load — the file is
+    # cleaned by the next config UI save.
+    def warn_stale_rules(config)
+      stale = config.stale_rules
+      return if stale.empty?
+
+      warn "cred-align-flow: #{File.basename(config.rules_file)} has #{stale.length} stale " \
+           "rule#{'s' unless stale.length == 1} referencing tokens or sources no longer in the " \
+           "config; they are ignored and dropped on the next config UI save"
     end
 
     def input_revision(config, env_path, state_path = nil)
@@ -463,9 +585,9 @@ module CredAlignFlow
         raise ConfigError, "--target requires --only so imported env names are explicit" unless targets.empty?
 
         unless digests_only || eligible.empty?
-          return [eligible, [], action.to_sym] if action != "default"
+          return [warn_unimportable(eligible), [], action.to_sym] if action != "default"
 
-          puts "Unimported env names: #{eligible.join(', ')}"
+          puts "Unimported env names: #{eligible.map { |name| annotate_unimportable(name) }.join(', ')}"
           puts "No active entries were added. Use --only NAMES and repeat --target 'SOURCE|CONTEXT|OWNER/REPO' per destination."
         end
         return [[], [], :none]
@@ -478,7 +600,23 @@ module CredAlignFlow
       return [only, scaffolder.validate_targets(config, targets), :targeted] unless targets.empty?
       raise ConfigError, "scaffold imports require at least one explicit --target" if action == "default"
 
-      [only, [], action.to_sym]
+      [warn_unimportable(only), [], action.to_sym]
+    end
+
+    # Bulk imports warn-and-skip names that can never become a managed
+    # secret (reserved prefix, invalid charset, overlong) rather than
+    # aborting every importable name alongside them.
+    def warn_unimportable(names)
+      names.select do |name|
+        reason = Config.unimportable_secret_name_reason(name.upcase)
+        warn "cred-align-flow: skipping env name #{name}: #{reason}" if reason
+        reason.nil?
+      end
+    end
+
+    def annotate_unimportable(name)
+      reason = Config.unimportable_secret_name_reason(name.upcase)
+      reason ? "#{name} (cannot be imported: #{reason})" : name
     end
 
     def announce_scaffold(mode, names, target_scope)
@@ -487,8 +625,8 @@ module CredAlignFlow
         puts "Will add #{names.length} commented scaffold draft entr#{names.length == 1 ? 'y' : 'ies'} " \
              "(uncomment each entry to activate it):"
       when :auto
-        puts "Will add #{names.length} minimal active secret entr#{names.length == 1 ? 'y' : 'ies'} " \
-             "under the token defaults:"
+        puts "Will add #{names.length} minimal inactive secret entr#{names.length == 1 ? 'y' : 'ies'} " \
+             "(assigned nowhere until the config UI grants scope):"
       else
         puts "Will add #{names.length} active secret entr#{names.length == 1 ? 'y' : 'ies'} for exact targets:"
         target_scope.each { |source, context, repository| puts "  #{source} #{context} #{repository}" }
@@ -512,7 +650,8 @@ module CredAlignFlow
           puts "Scaffolded #{count} as commented drafts into #{config.path}:"
           puts "Entries stay inactive until each draft block is uncommented."
         when :auto
-          puts "Scaffolded #{count} into #{config.path} under the token defaults."
+          puts "Scaffolded #{count} inactive into #{config.path}; " \
+               "assign scope in the config UI to enable."
         else
           puts "Scaffolded #{count} active into #{config.path}."
           puts "Entries are active only for the exact targets listed above."
@@ -525,6 +664,11 @@ module CredAlignFlow
       unless skipped.empty?
         puts "Could not update digests for #{skipped.length} secret#{'s' unless skipped.length == 1} " \
              "(entry format not editable): #{skipped.join(', ')}"
+      end
+      unimportable = result["unimportable"] || {}
+      unless unimportable.empty?
+        puts "Skipped unimportable env name#{'s' unless unimportable.length == 1}:"
+        unimportable.each { |name, reason| puts "  #{name}: #{reason}" }
       end
       0
     end
@@ -666,6 +810,7 @@ module CredAlignFlow
           cred-align-flow diff [options]
           cred-align-flow check [options]
           cred-align-flow apply [options]
+          cred-align-flow prune [options]
           cred-align-flow scaffold [options]
           cred-align-flow ui [options]
 
@@ -677,6 +822,7 @@ module CredAlignFlow
           diff       Alias for plan
           check      Exit non-zero when expected secrets are missing or stale
           apply      Write missing or stale secrets
+          prune      Delete remote secrets marked `delete` by repository rules
           scaffold   Add active secret entries for unmanaged env-file variables
           ui         Edit token defaults, presets, and repository rules in a local browser
 
@@ -691,7 +837,7 @@ module CredAlignFlow
         Inventory/pull/plan/diff/check/apply options:
           --source PATTERN  Limit source names (supports glob patterns)
 
-        Plan/diff/check/apply options:
+        Plan/diff/check/apply/prune options:
           --repo PATTERN    Limit repository names (supports glob patterns)
           --secret PATTERN  Limit secret names (supports glob patterns)
           --context PATTERN Limit provider contexts (supports glob patterns)
@@ -700,6 +846,11 @@ module CredAlignFlow
           --dry-run         apply only: refresh and report without writing
           --force           apply only: overwrite unverified or remotely newer secrets
           --yes             apply only: approve the freshly printed plan in noninteractive use
+                            prune: approve every printed deletion in noninteractive use
+
+        Prune asks for one keypress per marked remote secret: y deletes,
+        n skips, c (or any other key) stops the run. Marks come from the
+        config UI's `delete` repository rule or YAML `repository_rules`.
 
         Scaffold options:
           --only NAMES      Import only these comma-separated env names
@@ -710,7 +861,8 @@ module CredAlignFlow
         Without --target, the config's scaffold_action decides what an
         import does: "default" lists unimported names only, "import"
         writes commented full-field draft entries, "auto" writes
-        minimal active entries under the token defaults.
+        minimal inactive entries that stay unassigned until the config
+        UI grants scope.
 
         Default files:
           Config: cred-align.local.yml, config/cred-align.local.yml, config/config.yml,

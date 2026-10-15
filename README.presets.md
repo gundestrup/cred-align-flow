@@ -50,7 +50,7 @@ A repo preset holds a `token → rule` bundle for stamping onto a repository's p
 }
 ```
 
-Each token key maps to `include`, `exclude`, or `default` — the same values as the per-repository dropdowns. The `"*"` key is a catch-all stamped onto every configured token the preset does not name; without it, unlisted tokens keep their existing rules. Tokens locked by `exclude_sources` are skipped at apply time — no rule can cross that boundary.
+Each token key maps to `include`, `exclude`, `delete`, or `default` — the same values as the per-repository dropdowns (`delete` marks the remote secret for removal by `prune`). The `"*"` key is a catch-all stamped onto every configured token the preset does not name; without it, unlisted tokens keep their existing rules. Tokens locked by `exclude_sources` are skipped at apply time — no rule can cross that boundary.
 
 Applying a repo preset uses the "Repository-specific token rules" dropdown on a repository card. Stamping `default` behaves like choosing "Use token defaults": it deletes a redundant JSON rule, or writes an explicit `default` to cancel a hand-authored `repository_rules`/`exclude_repositories` match.
 

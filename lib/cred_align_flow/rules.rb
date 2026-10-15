@@ -13,7 +13,7 @@ module CredAlignFlow
   #     "version": 2,
   #     "rules": {
   #       "<source_id>": {
-  #         "<owner/repo>": { "<SECRET_NAME>": "default|include|exclude" }
+  #         "<owner/repo>": { "<SECRET_NAME>": "default|include|exclude|delete" }
   #       }
   #     },
   #     "token_defaults": {
@@ -25,8 +25,10 @@ module CredAlignFlow
   # "rules" — "include"/"exclude" override the secret's default
   # source/visibility scope for that repository; "default" restores the
   # default and cancels a hand-authored repository_rules or
-  # exclude_repositories match. exclude_sources in the YAML config always
-  # wins over a rules file include.
+  # exclude_repositories match. "delete" suppresses the assignment and
+  # marks the remote secret for removal — `prune` walks those marks and
+  # deletes them one at a time; `apply` never deletes. exclude_sources in
+  # the YAML config always wins over a rules file include or delete.
   #
   # "token_defaults" — per-secret default-scope overrides that replace the
   # same-named YAML fields (a field absent here keeps the YAML value).
@@ -40,7 +42,7 @@ module CredAlignFlow
   # "token_defaults"; older builds reject the file outright instead of
   # silently ignoring overrides that change the plan.
   class Rules
-    ACTIONS = %w[default include exclude].freeze
+    ACTIONS = %w[default include exclude delete].freeze
     SECRET_NAME_PATTERN = /\A[A-Za-z_][A-Za-z0-9_]*\z/
     SOURCE_ID_PATTERN = /\A[^\s|]+\z/
     TOKEN_DEFAULT_KEYS = %w[visibility sources targets exclude_repositories].freeze
@@ -134,6 +136,56 @@ module CredAlignFlow
 
     def any_include?(source_id, secret_name)
       entries.fetch(source_id, {}).any? { |_repo, secrets| secrets[secret_name] == "include" }
+    end
+
+    # Rules and token_defaults that can never fire because the token or
+    # source is gone from the config. They are ignored at load, reported
+    # to the UI as orphans, and dropped from the draft on the next save —
+    # a hand-edited YAML that removes a token must not wedge every
+    # command behind a rules-file cleanup.
+    def stale_references(source_ids, secret_names)
+      stale = []
+      entries.each do |source_id, repositories|
+        unknown_source = !source_ids.include?(source_id)
+        repositories.each do |repository_name, secrets|
+          secrets.each do |secret_name, action|
+            next unless unknown_source || !secret_names.include?(secret_name)
+
+            stale << {
+              "source" => source_id,
+              "repository" => repository_name,
+              "secret" => secret_name,
+              "rule" => action,
+              "reason" => unknown_source ? "source not in config" : "token not in config"
+            }
+          end
+        end
+      end
+      (token_defaults.keys - secret_names).each do |name|
+        stale << {
+          "section" => "token_defaults",
+          "secret" => name,
+          "reason" => "token not in config"
+        }
+      end
+      stale
+    end
+
+    def live_entries(source_ids, secret_names)
+      entries.each_with_object({}) do |(source_id, repositories), live|
+        next unless source_ids.include?(source_id)
+
+        kept = {}
+        repositories.each do |repository_name, secrets|
+          selected = secrets.slice(*secret_names)
+          kept[repository_name] = selected unless selected.empty?
+        end
+        live[source_id] = kept unless kept.empty?
+      end
+    end
+
+    def live_token_defaults(secret_names)
+      token_defaults.slice(*secret_names)
     end
 
     def validate_references!(source_ids, secret_names)
@@ -259,7 +311,7 @@ module CredAlignFlow
           end
           unless ACTIONS.include?(action)
             raise ConfigError,
-                  "rule for #{secret_name.inspect} on #{repository_name.inspect} must be default, include, or exclude"
+                  "rule for #{secret_name.inspect} on #{repository_name.inspect} must be default, include, exclude, or delete"
           end
         end
       end

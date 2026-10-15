@@ -2,6 +2,22 @@
 
 module CredAlignFlow
   class Config
+    # Names that can never become a managed secret fail every
+    # validation, so scaffold bulk-imports report and skip them instead
+    # of aborting the batch. Pass the name in remote form (env names are
+    # imported upcased). Returns the rejection reason or nil.
+    def self.unimportable_secret_name_reason(name)
+      name = name.to_s
+      return "exceeds the 100-character GitHub limit" if name.length > 100
+      unless name.match?(/\A[A-Z_][A-Z0-9_]*\z/)
+        return "must be uppercase letters, digits, and underscores " \
+               "(providers store secret names uppercase)"
+      end
+      return "uses the reserved GITHUB_ prefix" if name.start_with?("GITHUB_")
+
+      nil
+    end
+
     private
 
     def validate!
@@ -215,16 +231,11 @@ module CredAlignFlow
 
     def validate_secret_name!(name, context)
       validate_nonempty_string!(name, "#{context} name")
-      raise ConfigError, "#{context} name exceeds the 100-character GitHub limit" if name.length > 100
       # GitHub uppercases secret names and compares case-insensitively, so
       # local names are required to already be in remote form; mixed-case
       # names would plan creates forever and leak "unexpected" reports.
-      unless name.match?(/\A[A-Z_][A-Z0-9_]*\z/)
-        raise ConfigError,
-              "secret name #{name.inspect} must be uppercase letters, digits, and underscores " \
-              "(providers store secret names uppercase)"
-      end
-      raise ConfigError, "secret name #{name.inspect} uses the reserved GITHUB_ prefix" if name.start_with?("GITHUB_")
+      reason = Config.unimportable_secret_name_reason(name)
+      raise ConfigError, "secret name #{name.inspect} #{reason}" if reason
 
       name
     end
@@ -304,7 +315,7 @@ module CredAlignFlow
 
         repositories.each do |name, rule|
           unless Rules::ACTIONS.include?(rule)
-            raise ConfigError, "#{context} repository rule for #{name.inspect} must be default, include, or exclude"
+            raise ConfigError, "#{context} repository rule for #{name.inspect} must be default, include, exclude, or delete"
           end
         end
       end

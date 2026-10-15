@@ -13,6 +13,10 @@ class ApplierTest < Minitest::Test
       true
     end
 
+    def deletable?(_context)
+      true
+    end
+
     def owner_scoped_context?(_context)
       false
     end
@@ -36,6 +40,11 @@ class ApplierTest < Minitest::Test
       entry["updatedAt"] = (remote_clock || Time.now.utc).iso8601 unless remote_clock == :none
       remote_names << entry
     end
+
+    def delete_secret(repository, context, name)
+      calls << [:delete, repository, context, name]
+      remote_names.reject! { |secret| secret["name"] == name }
+    end
   end
 
   class OwnerScopeProvider < FakeProvider
@@ -55,6 +64,16 @@ class ApplierTest < Minitest::Test
   class PullOnlyProvider < FakeProvider
     def writable?(_context = nil)
       false
+    end
+
+    def deletable?(_context)
+      false
+    end
+  end
+
+  class FailingDeleteProvider < FakeProvider
+    def delete_secret(*)
+      raise CredAlignFlow::ProviderError, "synthetic delete failure"
     end
   end
 
@@ -781,7 +800,155 @@ class ApplierTest < Minitest::Test
     end
   end
 
+  def test_delete_item_removes_the_remote_secret_and_clears_records
+    seeded_github_source_with_delete(
+      remote_secrets: { "example/repo" => { "actions" => { "SONAR_TOKEN" => {} } } }
+    ) do |config, state, state_path|
+      repo = state.repository("github-main", "example/repo")
+      state.transaction! do |s|
+        s.record_application("github-main", repo, "actions", "SONAR_TOKEN", "v1",
+                             source_identity: config.source_key("github-main"))
+      end
+      env_values = { "SONAR_TOKEN_VALUE" => "synthetic-value" }
+      item = CredAlignFlow::Planner.new(config, state, env_values).plan.find do |entry|
+        entry.action == "delete"
+      end
+      provider = FakeProvider.new([], [{ "name" => "SONAR_TOKEN", "updatedAt" => "2026-01-02T00:00:00Z" }])
+      outcome = CredAlignFlow::Applier.new(
+        config, state, env_values, providers: { "github-main" => provider }
+      ).delete_item(item)
+
+      assert_equal "applied", outcome.status
+      assert_equal [[:delete, "example/repo", "actions", "SONAR_TOKEN"]], provider.calls
+      persisted = CredAlignFlow::State.new(state_path)
+
+      assert_nil persisted.remote_secret("github-main", "example/repo", "actions", "SONAR_TOKEN")
+      assert_nil persisted.applied_record("github-main", persisted.repository("github-main", "example/repo"),
+                                          "actions", "SONAR_TOKEN")
+    end
+  end
+
+  def test_delete_item_clears_the_local_record_when_remote_is_already_absent
+    seeded_github_source_with_delete(
+      remote_secrets: { "example/repo" => { "actions" => { "SONAR_TOKEN" => {} } } }
+    ) do |config, state, state_path|
+      repo = state.repository("github-main", "example/repo")
+      state.transaction! do |s|
+        s.record_application("github-main", repo, "actions", "SONAR_TOKEN", "v1",
+                             source_identity: config.source_key("github-main"))
+      end
+      env_values = { "SONAR_TOKEN_VALUE" => "synthetic-value" }
+      item = CredAlignFlow::Planner.new(config, state, env_values).plan.find do |entry|
+        entry.action == "delete"
+      end
+      provider = FakeProvider.new([], [])
+      outcome = CredAlignFlow::Applier.new(
+        config, state, env_values, providers: { "github-main" => provider }
+      ).delete_item(item)
+
+      assert_equal "applied", outcome.status
+      assert_includes outcome.detail, "already absent"
+      assert_empty provider.calls
+      persisted = CredAlignFlow::State.new(state_path)
+
+      assert_nil persisted.remote_secret("github-main", "example/repo", "actions", "SONAR_TOKEN")
+      assert_nil persisted.applied_record("github-main", persisted.repository("github-main", "example/repo"),
+                                          "actions", "SONAR_TOKEN")
+    end
+  end
+
+  def test_delete_item_skips_when_the_provider_cannot_delete
+    seeded_github_source_with_delete(
+      remote_secrets: { "example/repo" => { "actions" => { "SONAR_TOKEN" => {} } } }
+    ) do |config, state, _state_path|
+      env_values = { "SONAR_TOKEN_VALUE" => "synthetic-value" }
+      item = CredAlignFlow::Planner.new(config, state, env_values).plan.find do |entry|
+        entry.action == "delete"
+      end
+      provider = PullOnlyProvider.new([], [{ "name" => "SONAR_TOKEN" }])
+      outcome = CredAlignFlow::Applier.new(
+        config, state, env_values, providers: { "github-main" => provider }
+      ).delete_item(item)
+
+      assert_equal "skipped", outcome.status
+      assert_includes outcome.detail, "cannot delete"
+      assert_empty provider.calls
+      assert_equal [{ "name" => "SONAR_TOKEN" }], provider.remote_names
+    end
+  end
+
+  def test_delete_item_reports_provider_failures
+    seeded_github_source_with_delete(
+      remote_secrets: { "example/repo" => { "actions" => { "SONAR_TOKEN" => {} } } }
+    ) do |config, state, _state_path|
+      env_values = { "SONAR_TOKEN_VALUE" => "synthetic-value" }
+      item = CredAlignFlow::Planner.new(config, state, env_values).plan.find do |entry|
+        entry.action == "delete"
+      end
+      provider = FailingDeleteProvider.new([], [{ "name" => "SONAR_TOKEN" }])
+      outcome = CredAlignFlow::Applier.new(
+        config, state, env_values, providers: { "github-main" => provider }
+      ).delete_item(item)
+
+      assert_equal "failed", outcome.status
+      assert_includes outcome.detail, "synthetic delete failure"
+      # The local record stays: a failed delete must not look applied-away.
+      assert state.remote_secret("github-main", "example/repo", "actions", "SONAR_TOKEN")
+    end
+  end
+
+  def test_delete_item_needs_no_env_value
+    seeded_github_source_with_delete(
+      remote_secrets: { "example/repo" => { "actions" => { "SONAR_TOKEN" => {} } } }
+    ) do |config, state, _state_path|
+      item = CredAlignFlow::Planner.new(config, state, {}).plan.find do |entry|
+        entry.action == "delete"
+      end
+      provider = FakeProvider.new([], [{ "name" => "SONAR_TOKEN" }])
+      outcome = CredAlignFlow::Applier.new(
+        config, state, {}, providers: { "github-main" => provider }
+      ).delete_item(item)
+
+      assert_equal "applied", outcome.status
+      assert_empty provider.remote_names
+    end
+  end
+
   private
+
+  def seeded_github_source_with_delete(remote_secrets: {})
+    Dir.mktmpdir do |dir|
+      config_path = File.join(dir, "config.yml")
+      state_path = File.join(dir, "inventory.json")
+      File.write(config_path, <<~YAML)
+        version: 1
+        state_file: #{state_path}
+        sources:
+          github-main:
+            type: github
+            owner: example
+            repositories:
+              visibility: public
+        secrets:
+          - name: SONAR_TOKEN
+            value_env: SONAR_TOKEN_VALUE
+            targets:
+              github: [actions]
+            repository_rules:
+              github-main:
+                "example/repo": delete
+      YAML
+      config = CredAlignFlow::Config.new(config_path)
+      state = CredAlignFlow::State.new(state_path)
+      TestSupport.seed_source(
+        state, "github-main",
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "github-main"),
+        remote_secrets: remote_secrets
+      )
+      state.save!
+      yield config, state, state_path
+    end
+  end
 
   def seeded_github_source(remote_secrets: {})
     Dir.mktmpdir do |dir|

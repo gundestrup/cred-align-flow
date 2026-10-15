@@ -218,6 +218,18 @@ class ConfigTest < Minitest::Test
     assert_invalid_config(secrets: [{ "name" => "A" * 101 }])
   end
 
+  def test_unimportable_secret_name_reason_flags_names_that_can_never_validate
+    assert_nil CredAlignFlow::Config.unimportable_secret_name_reason("PLAIN_TOKEN")
+    assert_equal "uses the reserved GITHUB_ prefix",
+                 CredAlignFlow::Config.unimportable_secret_name_reason("GITHUB_TOKEN")
+    assert_includes CredAlignFlow::Config.unimportable_secret_name_reason("lowercase"),
+                    "uppercase letters, digits, and underscores"
+    assert_includes CredAlignFlow::Config.unimportable_secret_name_reason("9LEADING"),
+                    "uppercase letters, digits, and underscores"
+    assert_includes CredAlignFlow::Config.unimportable_secret_name_reason("A" * 101),
+                    "100-character GitHub limit"
+  end
+
   def test_rejects_misspelled_secret_source_key
     assert_invalid_config(secrets: [{ "name" => "SONAR_TOKEN", "source" => ["github-main"] }])
   end
@@ -487,7 +499,7 @@ class ConfigTest < Minitest::Test
     end
   end
 
-  def test_rejects_token_defaults_for_unknown_tokens
+  def test_tolerates_token_defaults_for_unknown_tokens
     Dir.mktmpdir do |dir|
       path = File.join(dir, "config.yml")
       rules_path = CredAlignFlow::Rules.default_path_for(path)
@@ -502,9 +514,14 @@ class ConfigTest < Minitest::Test
                                "token_defaults" => { "GONE_TOKEN" => { "visibility" => "all" } }
                              ))
 
-      error = assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+      config = CredAlignFlow::Config.new(path)
+      stale = config.stale_rules
 
-      assert_includes error.message, "unknown tokens"
+      assert_equal "SONAR_TOKEN", config.secrets.first.fetch("name")
+      assert_equal 1, stale.length
+      assert_equal "token_defaults", stale.first.fetch("section")
+      assert_equal "GONE_TOKEN", stale.first.fetch("secret")
+      assert_equal "token not in config", stale.first.fetch("reason")
     end
   end
 
@@ -529,7 +546,7 @@ class ConfigTest < Minitest::Test
     end
   end
 
-  def test_rejects_rules_file_references_to_unknown_tokens
+  def test_tolerates_rules_file_references_to_unknown_tokens_and_sources
     Dir.mktmpdir do |dir|
       path = File.join(dir, "config.yml")
       rules_path = CredAlignFlow::Rules.default_path_for(path)
@@ -540,12 +557,20 @@ class ConfigTest < Minitest::Test
                        ))
       File.write(rules_path, JSON.generate(
                                "version" => 1,
-                               "rules" => { "github-main" => { "example/repo" => { "GONE_TOKEN" => "include" } } }
+                               "rules" => {
+                                 "github-main" => { "example/repo" => { "GONE_TOKEN" => "include" } },
+                                 "gone-source" => { "example/repo" => { "SONAR_TOKEN" => "exclude" } }
+                               }
                              ))
 
-      error = assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+      config = CredAlignFlow::Config.new(path)
+      stale = config.stale_rules
 
-      assert_includes error.message, "unknown tokens"
+      assert_equal 2, stale.length
+      assert_equal "GONE_TOKEN", stale.first.fetch("secret")
+      assert_equal "token not in config", stale.first.fetch("reason")
+      assert_equal "gone-source", stale.last.fetch("source")
+      assert_equal "source not in config", stale.last.fetch("reason")
     end
   end
 

@@ -60,6 +60,7 @@ module CredAlignFlow
     end
 
     def assignment_category(assignment)
+      return "delete" if assignment == "deleted_manual"
       return "manual" if assignment == "excluded_manual"
       return "source" if assignment == "excluded_source"
 

@@ -207,6 +207,39 @@ class ConfigEditorTest < Minitest::Test
     end
   end
 
+  def test_stale_rules_after_yaml_edits_are_reported_and_dropped_on_save
+    with_editor do |editor, config_path, _env_path, _state_path, rules_path|
+      view = editor.data
+      rules = { "github-main" => { "example/repo" => { "SAMPLE_TOKEN" => "include" } } }
+      defaults = { "SAMPLE_TOKEN" => { "visibility" => "all" } }
+      editor.save(payload(view, rules: rules, token_defaults: defaults))
+
+      # The token leaves the hand-edited YAML; its rules are now dead.
+      data = YAML.safe_load_file(config_path)
+      data["secrets"] = []
+      File.write(config_path, YAML.dump(data))
+
+      stale_view = editor.data
+      orphans = stale_view.fetch("orphan_rules")
+      rule_orphan = orphans.find { |entry| entry["rule"] == "include" }
+      defaults_orphan = orphans.find { |entry| entry["section"] == "token_defaults" }
+
+      assert_equal "SAMPLE_TOKEN", rule_orphan.fetch("secret")
+      assert_equal "token not in config", rule_orphan.fetch("reason")
+      assert_equal "token not in config", defaults_orphan.fetch("reason")
+      assert_equal({}, stale_view.fetch("rules"))
+      assert_equal({}, stale_view.fetch("token_defaults"))
+
+      # The draft never carried the dead references, so saving any change
+      # writes a clean file.
+      cleaned = editor.save(payload(stale_view))
+
+      assert_empty cleaned.fetch("orphan_rules")
+      assert_equal({}, CredAlignFlow::Rules.new(rules_path).entries)
+      assert_equal({}, CredAlignFlow::Rules.new(rules_path).token_defaults)
+    end
+  end
+
   def test_orphan_rules_are_reported_when_repositories_leave_the_inventory
     with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
       view = editor.data
@@ -319,6 +352,68 @@ class ConfigEditorTest < Minitest::Test
 
       # The saved library still wins on a plain reload.
       assert_equal({}, editor.data.fetch("token_presets"))
+    end
+  end
+
+  def test_stale_preset_references_are_reported_filtered_and_dropped_on_save
+    with_editor do |editor, _config_path, _env_path, _state_path, rules_path|
+      repo_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :repos)
+      token_path = CredAlignFlow::PresetLibrary.path_for(rules_path, :tokens)
+      File.write(repo_path, JSON.generate(
+                              "version" => 1,
+                              "presets" => {
+                                "hosting" => { "SAMPLE_TOKEN" => "include", "GHOST_TOKEN" => "exclude", "*" => "default" }
+                              }
+                            ))
+      File.write(token_path, JSON.generate(
+                               "version" => 1,
+                               "presets" => { "gone" => { "sources" => %w[github-main ghost-source] } }
+                             ))
+
+      view = editor.data
+
+      # The disk state loads, previews clean, and carries the stale
+      # references in the orphan list instead of 422-ing every request.
+      stale = view.fetch("orphan_rules").reject { |entry| entry["removable"] }
+
+      assert_equal(
+        [
+          { "preset" => "gone", "field" => "sources", "value" => "ghost-source" },
+          { "preset" => "hosting", "secret" => "GHOST_TOKEN" }
+        ],
+        stale.map { |entry| entry.slice("preset", "field", "value", "secret") }
+      )
+      assert_equal(
+        { "hosting" => { "SAMPLE_TOKEN" => "include", "*" => "default" } },
+        view.fetch("repo_presets")
+      )
+      assert_equal({ "gone" => { "sources" => ["github-main"] } }, view.fetch("token_presets"))
+
+      # The filtered draft validates — this is the request that used to
+      # 422 whenever a preset named a deleted token or source.
+      preview = editor.preview(payload(
+                                 view,
+                                 token_presets: view.fetch("token_presets"),
+                                 repo_presets: view.fetch("repo_presets")
+                               ))
+
+      assert_equal view.fetch("repo_presets"), preview.fetch("repo_presets")
+
+      saved = editor.save(payload(
+                            view,
+                            token_presets: view.fetch("token_presets"),
+                            repo_presets: view.fetch("repo_presets")
+                          ))
+
+      assert_empty(saved.fetch("orphan_rules").reject { |entry| entry["removable"] })
+      assert_equal(
+        { "hosting" => { "SAMPLE_TOKEN" => "include", "*" => "default" } },
+        CredAlignFlow::PresetLibrary.new(repo_path, type: :repos).presets
+      )
+      assert_equal(
+        { "gone" => { "sources" => ["github-main"] } },
+        CredAlignFlow::PresetLibrary.new(token_path, type: :tokens).presets
+      )
     end
   end
 
@@ -487,6 +582,23 @@ class ConfigEditorTest < Minitest::Test
       assert_equal "no target context is enabled for this provider",
                    rows.fetch("OTHER_TOKEN").fetch("reason")
       assert_empty repository.fetch("assigned")
+    end
+  end
+
+  def test_view_separates_unimportable_env_names_from_importable_ones
+    with_editor do |editor, _config_path, env_path, _state_path, _rules_path|
+      File.open(env_path, "a") do |file|
+        file.puts "UNMANAGED_TOKEN=x"
+        file.puts "GITHUB_TOKEN=x"
+      end
+
+      view = editor.data
+
+      assert_equal ["UNMANAGED_TOKEN"], view.fetch("unimported_env_names")
+      assert_equal(
+        { "GITHUB_TOKEN" => "uses the reserved GITHUB_ prefix" },
+        view.fetch("unimportable_env_names")
+      )
     end
   end
 

@@ -64,6 +64,14 @@ module CredAlignFlow
         false
       end
 
+      # Repository secret removal is supported even though value writes
+      # stay pull-only: `prune` deletes are explicit per-item user intent,
+      # and the API exposes DELETE on the repo actions-secrets path.
+      # The write-only user scope is never deletable.
+      def self.deletable?(context)
+        context.to_s == "actions"
+      end
+
       # Opt-in gate: `user_secrets: true` on the source enables blind
       # pushes to the account-level user-secret store. Since the API
       # cannot list them, applies are unverifiable by design.
@@ -123,6 +131,21 @@ module CredAlignFlow
         end
 
         put_secret("/user/actions/secrets/#{escape(name)}", value)
+      end
+
+      def delete_secret(repository, context, name)
+        validate_context!(context)
+        if owner_scoped_context?(context)
+          raise ProviderError, "Forgejo user-scope secrets cannot be deleted; the API is write-only"
+        end
+        unless name.is_a?(String) && name.match?(USER_SECRET_NAME_PATTERN)
+          raise ProviderError, "invalid Forgejo secret name #{name.to_s[0, 40].inspect}"
+        end
+
+        owner, repo = repository_parts(repository)
+        path = "/repos/#{escape(owner)}/#{escape(repo)}/actions/secrets/#{escape(name)}"
+        http_request(Net::HTTP::Delete.new(api_uri(path)), path)
+        nil
       end
 
       def cli_version

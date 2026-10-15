@@ -55,9 +55,9 @@ state_file: ~/.local/state/cred-align-flow/inventory.json
 #   - LOCAL_HELPER_VAR
 # What `scaffold` does with unimported env names when no --target is
 # given: default lists them only, import writes commented full-field
-# draft entries, auto writes minimal active entries under the token
-# defaults (scope fields are managed via the UI or by hand). Explicit
-# --target tuples always win.
+# draft entries, auto writes minimal inactive entries — assigned
+# nowhere until the UI grants scope via token defaults or rules.
+# Explicit --target tuples always win.
 # scaffold_action: default
 
 sources:
@@ -121,7 +121,7 @@ Secret selection supports:
 - `sources`: all configured sources by default, a list, or `all`
 - `exclude_sources`: source names to skip
 - `exclude_repositories`: a flat list or a mapping by source name
-- `repository_rules`: exact per-source `owner/repository` overrides with `include`, `exclude`, or `default`; `include`/`exclude` override the token's default source/visibility scope for that repository, but `exclude_sources` always wins. `default` restores the normal scope and can cancel a `exclude_repositories` match.
+- `repository_rules`: exact per-source `owner/repository` overrides with `include`, `exclude`, `delete`, or `default`; `include`/`exclude` override the token's default source/visibility scope for that repository, but `exclude_sources` always wins. `delete` stops syncing the token there and marks any existing remote secret for removal — `prune` walks each marked item for confirmation before deleting. `default` restores the normal scope and can cancel a `exclude_repositories` match.
 - `targets.github`: any subset of `actions`, `agents`, `codespaces`, `dependabot`; defaults to `actions` when unset. `agents` is the Copilot cloud agent store and needs a recent `gh`; it does not exist on GHES.
 - `targets.forgejo`: `actions` (repository secrets; pull-only) and `user` (account-level secrets shared across the token owner's repositories). `user` is push-only: the Forgejo API cannot list user secrets, so the plan decides from the applied journal alone and writes blindly — enable it per source with `user_secrets: true`. There is no user-scope delete.
 - `value_env`: environment variable containing the value; defaults to the secret name
@@ -151,12 +151,16 @@ UI-managed effective state lives in a JSON file next to the config. The default 
 }
 ```
 
-`rules` maps `source → owner/repository → secret name → include`, `exclude`, or `default`. `include`/`exclude` override the secret's default `sources`/`visibility` scope for that repository; `default` restores it and cancels a `exclude_repositories` or `repository_rules` match. `exclude_sources` always wins. Rules file entries take precedence over a hand-authored `repository_rules` key for the same repository and token; both CLI commands and the UI resolve the merged result.
+`rules` maps `source → owner/repository → secret name → include`, `exclude`, `delete`, or `default`. `include`/`exclude` override the secret's default `sources`/`visibility` scope for that repository; `default` restores it and cancels a `exclude_repositories` or `repository_rules` match; `delete` stops syncing the secret there and marks the remote copy for removal by `prune`. `exclude_sources` always wins. Rules file entries take precedence over a hand-authored `repository_rules` key for the same repository and token; both CLI commands and the UI resolve the merged result.
 
 `token_defaults` overrides a secret's default scope per field: `visibility`, `sources`, `targets`, and `exclude_repositories` set here replace the same YAML fields (an overlaid `exclude_repositories` replaces both `exclude_repositories` and `exclude_repos`); fields left unset keep the YAML value. Token identity is never overridable — `name`, `value_env`, digests, versions, `exclude_sources`, and `repository_rules` stay in the YAML.
 
 Files without `token_defaults` stay at `version: 1`, so they remain readable by older builds. A `version: 2` file is rejected by builds that predate the section rather than silently ignoring overrides that change the plan.
 
+Rules and `token_defaults` that reference a token or source no longer in the YAML config are **stale**: they can never fire, so they are ignored on load rather than failing the command — the CLI prints a warning, the UI lists them in the orphan notice, and the next UI save drops them. Deleting or renaming a token in the YAML is the typical cause; review the notice before saving so a re-added name cannot silently re-inherit an old rule.
+
 ### Preset files
 
 The UI also manages two preset-library files beside the rules file, named after it — `cred-align.rules.json` pairs with `cred-align.presets-tokens.json` and `cred-align.presets-repos.json`, while a plain `rules.json` pairs with `presets-tokens.json` and `presets-repos.json`. They hold reusable stamp templates (token scope presets and repo rule bundles) that `plan`/`apply`/`check` never read — see [README.presets.md](README.presets.md).
+
+Preset entries go stale the same way rules do: a repo-preset entry naming a token, or a token-preset `sources`/`exclude_repositories` entry naming a source, that no longer exists is inert, listed in the orphan notice, and dropped from the draft on the next save — while strict validation still rejects a *submitted* draft containing unknown references.

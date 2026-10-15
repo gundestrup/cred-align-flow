@@ -575,6 +575,65 @@ class GitHubCliTest < Minitest::Test
     assert_raises(CredAlignFlow::ProviderError) { provider.secrets("example/repo", "bogus") }
   end
 
+  def test_prune_deletes_a_marked_remote_secret_without_touching_writes
+    remote = { "example/repo|actions" => [{ "name" => "SYNC_TOKEN", "updatedAt" => "2026-01-01T00:00:00Z" }] }
+    with_workspace(contexts: ["actions"], remote_secrets: remote) do |workspace|
+      rules_path = CredAlignFlow::Rules.default_path_for(workspace.fetch(:config_path))
+      File.write(rules_path, JSON.generate(
+                               "version" => 1,
+                               "rules" => {
+                                 "github-main" => { "example/repo" => { "SYNC_TOKEN" => "delete" } }
+                               }
+                             ))
+
+      _stdout, stderr, status = invoke(workspace, "pull")
+
+      assert_predicate status, :success?, stderr
+
+      stdout, _stderr, status = invoke(workspace, "plan", "--offline")
+
+      assert_predicate status, :success?
+      assert_includes stdout, "delete"
+      refute_includes stdout, "unexpected"
+
+      stdout, stderr, status = invoke(workspace, "prune", "--yes")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stdout, "Prune: 1 deleted"
+      delete_calls = workspace.fetch(:fake_gh).calls.select do |call|
+        call.fetch("arguments").first(2) == %w[secret delete]
+      end
+
+      assert_equal([["secret", "delete", "SYNC_TOKEN", "--repo", "example/repo", "--app", "actions"]],
+                   delete_calls.map { |call| call.fetch("arguments") })
+      assert_empty write_calls(workspace.fetch(:fake_gh))
+      assert_empty workspace.fetch(:fake_gh).state.fetch("secrets").fetch("example/repo|actions", [])
+      refute_includes stdout + stderr, TEST_SECRET_VALUE
+      refute_includes stdout + stderr, TEST_AUTH_TOKEN
+    end
+  end
+
+  def test_prune_reports_failure_when_the_provider_delete_fails
+    remote = { "example/repo|actions" => [{ "name" => "SYNC_TOKEN", "updatedAt" => "2026-01-01T00:00:00Z" }] }
+    with_workspace(contexts: ["actions"], remote_secrets: remote) do |workspace|
+      rules_path = CredAlignFlow::Rules.default_path_for(workspace.fetch(:config_path))
+      File.write(rules_path, JSON.generate(
+                               "version" => 1,
+                               "rules" => {
+                                 "github-main" => { "example/repo" => { "SYNC_TOKEN" => "delete" } }
+                               }
+                             ))
+
+      stdout, _stderr, status = invoke(
+        workspace, "prune", "--yes", environment_overrides: { "FAKE_GH_FAIL_DELETE" => "1" }
+      )
+
+      assert_equal 1, status.exitstatus
+      assert_includes stdout, "FAILED"
+      refute_empty workspace.fetch(:fake_gh).state.fetch("secrets").fetch("example/repo|actions", [])
+    end
+  end
+
   def test_malformed_or_duplicate_secret_listing_fails_closed
     remote = { "example/repo|actions" => [{ "name" => "DUP_TOKEN" }, { "name" => "dup_token" }] }
     with_workspace(contexts: ["actions"], remote_secrets: remote) do |workspace|

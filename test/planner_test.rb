@@ -294,6 +294,81 @@ class PlannerTest < Minitest::Test
     end
   end
 
+  def test_delete_rule_suppresses_assignment_and_marks_present_remotes
+    Dir.mktmpdir do |dir|
+      config = build_config(
+        dir,
+        secret_options: { "repository_rules" => { "github-main" => { "example/repo" => "delete" } } }
+      )
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(
+        state,
+        "github-main",
+        remote_secrets: {
+          "example/repo" => {
+            "actions" => { "SONAR_TOKEN" => { "updated_at" => "2026-01-01T00:00:00Z" },
+                           "REMOTE_ONLY" => { "updated_at" => "2026-01-01T00:00:00Z" } },
+            "dependabot" => { "SONAR_TOKEN" => { "updated_at" => "2026-01-01T00:00:00Z" } }
+          }
+        }
+      )
+
+      planner = CredAlignFlow::Planner.new(config, state, { "SONAR_TOKEN_VALUE" => "redacted" })
+      items = planner.plan
+      rows = items.map { |item| [item.context, item.secret, item.action] }
+
+      # Every context copy of the marked name gets a delete item; the
+      # token is not assigned, and the marked name is not "unexpected".
+      assert_includes rows, %w[actions SONAR_TOKEN delete]
+      assert_includes rows, %w[dependabot SONAR_TOKEN delete]
+      assert_includes rows, %w[actions REMOTE_ONLY unexpected]
+      refute(items.any? { |item| item.secret == "SONAR_TOKEN" && item.action != "delete" })
+      assert_empty planner.actionable_items
+      assert_equal(2, planner.blocking_items.count { |item| item.action == "delete" })
+      assignment = config.secret_assignment(config.secrets.first, "github-main", TestSupport.repository_metadata).first
+
+      assert_equal "deleted_manual", assignment
+    end
+  end
+
+  def test_delete_rule_plans_nothing_when_the_remote_is_absent
+    Dir.mktmpdir do |dir|
+      config = build_config(
+        dir,
+        secret_options: { "repository_rules" => { "github-main" => { "example/repo" => "delete" } } }
+      )
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(state, "github-main")
+
+      planner = CredAlignFlow::Planner.new(config, state, { "SONAR_TOKEN_VALUE" => "redacted" })
+
+      assert_empty planner.plan
+      assert_empty planner.blocking_items
+    end
+  end
+
+  def test_delete_rule_from_the_rules_file_marks_remotes
+    Dir.mktmpdir do |dir|
+      config = build_config(
+        dir,
+        rules: { "github-main" => { "example/repo" => { "SONAR_TOKEN" => "delete" } } }
+      )
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(
+        state,
+        "github-main",
+        remote_secrets: {
+          "example/repo" => { "actions" => { "SONAR_TOKEN" => { "updated_at" => "2026-01-01T00:00:00Z" } } }
+        }
+      )
+
+      items = CredAlignFlow::Planner.new(config, state, { "SONAR_TOKEN_VALUE" => "redacted" }).plan
+
+      assert_equal %w[delete], items.map(&:action).uniq
+      assert_includes items.first.detail, "prune"
+    end
+  end
+
   def test_explicit_source_exclusion_wins_over_repository_include
     Dir.mktmpdir do |dir|
       config = build_config(
@@ -416,7 +491,7 @@ class PlannerTest < Minitest::Test
   end
 
   def test_plan_item_actionability_matches_the_force_policy
-    actions = %w[create update unverified_present remote_newer ok missing_value pull_only unexpected unknown]
+    actions = %w[create update unverified_present remote_newer ok missing_value pull_only unexpected delete unknown]
     expected = {
       false => %w[create update],
       true => %w[create update unverified_present remote_newer]

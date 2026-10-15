@@ -67,6 +67,16 @@ Run the apply flow without writing remote secrets:
 bin/cred-align-flow apply --dry-run
 ```
 
+Delete remote secrets marked by a `delete` repository rule — set in the config UI's per-repository rule dropdown or via YAML `repository_rules`. Prune refreshes the inventory like `apply`, lists every remote secret still present under a mark, then asks for one keypress per item: `y` deletes it, `n` skips it, `c` (or any other key, including EOF) stops the run. For noninteractive use, `--yes` approves every printed deletion:
+
+```bash
+bin/cred-align-flow prune
+bin/cred-align-flow prune --source github-main --repo owner/repo
+bin/cred-align-flow prune --yes
+```
+
+Marks suppress normal syncing on that repository — a `delete`-marked secret no longer receives `apply` writes. Remote secrets that simply stop being configured are *not* deleted; they stay report-only as `unexpected`. Providers that cannot delete a context (pull-only writes, Forgejo account scope) report the mark as undeletable instead of pretending it ran. Deletion never needs the local value, so it still works after the env entry is gone.
+
 `scaffold` refreshes existing value digests and lists unimported env names; with the default `scaffold_action` it does not import names unless `--only` is supplied. Imports remain active entries, but require an exact destination tuple for every reviewed target:
 
 ```bash
@@ -85,9 +95,11 @@ The top-level `scaffold_action:` setting changes what happens when names are imp
 - `import`: `scaffold` (all names) or `scaffold --only NAMES` writes the entries into the YAML as **commented draft blocks** marked `# scaffold-draft:` — they stay inactive until you uncomment each entry. Drafted names are not offered again.
 
 Imports under `import` or explicit `--target` tuples write the **full field set** so every option is visible: `visibility` (with its enum), `sources`, `targets` listing every context each configured provider supports (unselected contexts and owner scopes stay commented, e.g. Forgejo `user` notes its `user_secrets: true` requirement), the real `exclude_repositories`/`repository_rules` narrowing for targeted imports, and optional `exclude_sources`/narrowing templates as comments. Inside a draft block, comment lines carry a second `#` (`# #`), so removing one `# ` per line activates the entry while optional fields stay commented for the user to enable, delete, or change.
-- `auto`: imports and **activates** the entries as minimal definitions — only `name`/`value_env`, digest, and version are written, so the token defaults apply (all sources, `visibility: public`, each provider's implicit context — GitHub `actions`; Forgejo sources need a `targets` entry, e.g. stamped by the UI's built-in Forgejo preset). Scope is then managed in the UI (`token_defaults`, presets, repo rules) or by editing the YAML.
+- `auto`: imports the entries as minimal **inactive** definitions — `name`/`value_env`, digest, version, plus an explicit empty `targets` list per configured provider type. The token exists (it appears in the UI, its digest syncs, stale rules stay attached to the name) but plans and applies nothing anywhere until scope is granted: assign `sources`/`targets` via the UI token card (`token_defaults`), a preset, or a repository rule — the UI overlay overrides the empty YAML targets without editing the file.
 
 Explicit `--target` tuples always produce active targeted entries, whatever the action.
+
+Names that can never be valid managed secrets — invalid charset, over 100 characters, or the reserved `GITHUB_` prefix (e.g. `GITHUB_TOKEN`, which both GitHub and Forgejo Actions reserve) — cannot be imported at all. Bulk `import`/`auto` runs warn and skip them so one bad name does not abort the rest of the batch; the default list-only output annotates them instead of offering them for import, and the config UI lists them under "Cannot be imported". An explicit `--target` import of such a name still fails instead of silently skipping it — rename the variable in the env file (e.g. `GH_TOKEN`) and, if the name is a helper rather than a managed secret, `scaffold --ignore NAME`.
 
 ## Plan statuses
 
@@ -99,6 +111,7 @@ Explicit `--target` tuples always produce active targeted entries, whatever the 
 - `pull_only`: the target's source is read-only (Forgejo repository secrets); the state is reported but never written.
 - `unexpected`: a remote secret exists outside the configured target scope. It is report-only.
 - `missing_value`: the configured `value_env` is not set.
+- `delete`: a `delete` repository rule marked the remote secret for removal. `apply` never touches it; `prune` walks each marked item for confirmation before deleting.
 
 Owner-scope targets (Forgejo `user`) are listed once per source under the synthetic `@owner` repository. Because the API cannot enumerate that store, `create`/`update`/`ok` there are journal-only judgments: `create` means "no recorded apply", `update` means "the local value differs from the recorded fingerprint", and neither says anything about remote state. There is no `unverified_present`, `remote_newer`, or `unexpected` for owner scope.
 

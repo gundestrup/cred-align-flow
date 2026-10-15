@@ -138,6 +138,22 @@ module CredAlignFlow
             ], stdin_data: value)
       end
 
+      # `gh secret delete` removes without an interactive prompt; the same
+      # name checks as set_secret guard the command line.
+      def delete_secret(repository, context, name)
+        validate_context!(context)
+        validate_name_arg!(repository)
+        unless name.is_a?(String) && name.match?(SECRET_NAME_PATTERN) && !name.start_with?("GITHUB_")
+          raise ProviderError, "invalid GitHub secret name #{name.to_s[0, 40].inspect}"
+        end
+
+        run([
+              "secret", "delete", name,
+              "--repo", repository,
+              "--app", context
+            ])
+      end
+
       def cli_version
         stdout, = run(["--version"], require_auth: false, include_auth: false)
         version = stdout.lines.first.to_s.match(/\Agh version (\d+(?:\.\d+){1,2})\b/)

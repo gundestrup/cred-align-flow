@@ -254,6 +254,39 @@ class ForgejoProviderTest < Minitest::Test
     end
   end
 
+  def test_repository_secret_delete_uses_the_actions_endpoint
+    with_http_server([{ status: 204, body: {} }]) do |adapter, requests|
+      assert adapter.deletable?("actions")
+      assert_nil adapter.delete_secret("example/repo", "actions", "SONAR_TOKEN")
+
+      request = requests.pop
+
+      assert_equal "DELETE", request.fetch("method")
+      assert_equal "/api/v1/repos/example/repo/actions/secrets/SONAR_TOKEN", request.fetch("target")
+      assert_equal "token #{TEST_AUTH_TOKEN}", request.fetch("headers").fetch("authorization")
+      assert_empty request.fetch("body")
+    end
+  end
+
+  def test_user_scope_delete_is_never_attempted
+    adapter = build_adapter
+
+    refute adapter.deletable?("user")
+    error = assert_raises(CredAlignFlow::ProviderError) do
+      adapter.delete_secret("example/repo", "user", "SONAR_TOKEN")
+    end
+    assert_includes error.message, "write-only"
+  end
+
+  def test_delete_maps_http_errors_to_provider_errors
+    with_http_server([{ status: 403, body: { "message" => "denied" } }]) do |adapter, _requests|
+      error = assert_raises(CredAlignFlow::ProviderError) do
+        adapter.delete_secret("example/repo", "actions", "SONAR_TOKEN")
+      end
+      assert_includes error.message, "HTTP 403"
+    end
+  end
+
   private
 
   def build_adapter(overrides = {})

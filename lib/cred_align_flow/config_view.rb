@@ -45,12 +45,13 @@ module CredAlignFlow
         "builtin_token_presets" => json_safe(Providers.builtin_token_presets(provider_types)),
         "secrets" => secret_entries,
         "sources" => source_entries,
-        "rules" => @config.rules.entries,
-        "token_defaults" => @config.rules.token_defaults,
-        "token_presets" => @token_presets.presets,
-        "repo_presets" => @repo_presets.presets,
+        "rules" => @config.rules.live_entries(@config.source_ids, secret_names),
+        "token_defaults" => @config.rules.live_token_defaults(secret_names),
+        "token_presets" => @token_presets.live_presets(@config),
+        "repo_presets" => @repo_presets.live_presets(@config),
         "orphan_rules" => orphan_rules,
         "unimported_env_names" => unimported_env_names,
+        "unimportable_env_names" => unimportable_env_names,
         "ignored_env_names" => @config.ignored_env_names,
         "scaffold_action" => @config.scaffold_action,
         "action_summary" => action_summary,
@@ -88,11 +89,26 @@ module CredAlignFlow
     end
 
     def unimported_env_names
-      return [] unless @scaffolder
+      env_name_candidates - unimportable_env_names.keys
+    end
 
-      @scaffolder.candidates(@env_values, @config)
-    rescue ConfigError
-      []
+    # Names that can never become a managed secret (reserved prefix,
+    # invalid charset after upcasing, overlong): scaffold bulk-imports
+    # warn-and-skip them, so the notice reports them separately instead
+    # of implying `scaffold` will import them.
+    def unimportable_env_names
+      @unimportable_env_names ||= env_name_candidates.to_h do |name|
+        [name, Config.unimportable_secret_name_reason(name.upcase)]
+      end.compact
+    end
+
+    def env_name_candidates
+      @env_name_candidates ||=
+        begin
+          @scaffolder ? @scaffolder.candidates(@env_values, @config) : []
+        rescue ConfigError
+          []
+        end
     end
 
     def action_summary
@@ -147,7 +163,16 @@ module CredAlignFlow
       }
     end
 
+    # Two orphan kinds: rules whose repository left the inventory (may
+    # revive on refresh — kept in the draft until explicitly removed) and
+    # rules/token_defaults/preset entries whose token or source left the
+    # config (dead — excluded from the draft, dropped on the next save).
     def orphan_rules
+      repository_orphans + @config.stale_rules +
+        @token_presets.stale_references(@config) + @repo_presets.stale_references(@config)
+    end
+
+    def repository_orphans
       @config.rules.entries.flat_map do |source_id, repositories|
         known = @state.data.dig("sources", source_id, "repositories")
         next [] unless known
@@ -156,10 +181,21 @@ module CredAlignFlow
           next [] if known.key?(repository_name)
 
           secrets.map do |secret_name, rule|
-            { "source" => source_id, "repository" => repository_name, "secret" => secret_name, "rule" => rule }
+            {
+              "source" => source_id,
+              "repository" => repository_name,
+              "secret" => secret_name,
+              "rule" => rule,
+              "reason" => "repository not in inventory",
+              "removable" => true
+            }
           end
         end
       end
+    end
+
+    def secret_names
+      @secret_names ||= @config.secrets.map { |secret| secret.fetch("name") }
     end
 
     def plan_index

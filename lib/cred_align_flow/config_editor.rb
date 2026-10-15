@@ -138,7 +138,10 @@ module CredAlignFlow
 
     # The candidate document is schema v2; Rules normalizes the stored
     # version back to 1 when no token_defaults are present, so rules-only
-    # files stay readable by older builds.
+    # files stay readable by older builds. Reference validation stays
+    # strict here: a submitted draft naming unknown tokens or sources is
+    # an error, while entries already on disk that went stale after a
+    # hand-edited YAML are dropped from the draft instead of blocking it.
     def candidate_config(payload, config_bytes)
       rules = Rules.new(
         @rules_path,
@@ -148,7 +151,9 @@ module CredAlignFlow
           "token_defaults" => payload.fetch("token_defaults")
         }
       )
-      [Config.new(@config_path, data: parse_config(config_bytes), rules: rules), rules]
+      config = Config.new(@config_path, data: parse_config(config_bytes), rules: rules)
+      rules.validate_references!(config.source_ids, config.secrets.map { |secret| secret.fetch("name") })
+      [config, rules]
     end
 
     # Candidate preset libraries, reference-checked against the candidate

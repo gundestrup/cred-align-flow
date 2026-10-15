@@ -91,10 +91,11 @@ module CredAlignFlow
     # draft marker itself stays a comment. Optional fields are emitted as
     # comment lines, so inside a draft they carry "# #" and stay inactive
     # even after the entry is uncommented. :auto writes the minimal
-    # entry — identity fields only — so scope is decided by token
-    # defaults and the UI's token_defaults/rules layers. :targeted and
-    # :import write the full field set: every scope option is present for
-    # the user to uncomment, delete, or change, with adapter-supported
+    # entry — identity fields plus an explicit empty `targets` per
+    # provider type — so the token exists but is assigned nowhere until
+    # the config UI grants scope through token_defaults/rules. :targeted
+    # and :import write the full field set: every scope option is present
+    # for the user to uncomment, delete, or change, with adapter-supported
     # contexts enumerated per provider type.
     def render(name, indent, mode: :targeted)
       pad = " " * indent
@@ -103,14 +104,7 @@ module CredAlignFlow
       commented = mode == :import
       minimal = mode == :auto
       marker = commented ? Scaffolder::DRAFT_MARKER : Scaffolder::MARKER
-      note =
-        if commented
-          "imported draft; uncomment \"# \" lines to activate (\"# #\" lines are optional)"
-        elsif minimal
-          "imported and activated under the token defaults"
-        else
-          "imported from the env file"
-        end
+      note = entry_note(commented, minimal)
       lines = [
         "",
         "#{pad}#{marker} #{name} - #{note}",
@@ -120,7 +114,9 @@ module CredAlignFlow
         "#{pad}  version: #{quote(@at.strftime('%Y-%m-%d'))}",
         "#{pad}  version_at: #{quote(@at.strftime('%Y-%m-%dT%H:%M:%SZ'))}"
       ].compact
-      unless minimal
+      if minimal
+        lines.concat(minimal_scope_lines(pad))
+      else
         lines << "#{pad}  visibility: all  # public | private | all"
         lines.concat(scope_lines(pad))
         lines.concat(optional_lines(pad))
@@ -130,6 +126,25 @@ module CredAlignFlow
     end
 
     private
+
+    def entry_note(commented, minimal)
+      if commented
+        "imported draft; uncomment \"# \" lines to activate (\"# #\" lines are optional)"
+      elsif minimal
+        "imported inactive; assign scope in the config UI to enable"
+      else
+        "imported from the env file"
+      end
+    end
+
+    # Empty per-provider targets keep the entry inert: no enabled
+    # context means no plan items, while a UI token_defaults overlay
+    # can still grant scope without touching the YAML.
+    def minimal_scope_lines(pad)
+      lines = ["#{pad}  targets:"]
+      provider_types.each { |type| lines << "#{pad}    #{quote(type)}: []" }
+      lines
+    end
 
     def comment_entry(lines)
       lines.map do |line|
@@ -203,7 +218,7 @@ module CredAlignFlow
       lines << "#{pad}  # repository_rules:"
       @scope.fetch(:sources).each do |source_id|
         lines << "#{pad}  #   #{quote(source_id)}:"
-        lines << "#{pad}  #     \"owner/repo\": include  # include | exclude | default"
+        lines << "#{pad}  #     \"owner/repo\": include  # include | exclude | delete | default"
       end
       lines
     end
@@ -269,13 +284,17 @@ module CredAlignFlow
       scope_for(Config.new(@config_path), targets).fetch(:tuples)
     end
 
-    # Returns { "added" => [...], "digests" => [...], "skipped_digests" => [...] }.
+    # Returns { "added" => [...], "digests" => [...],
+    # "skipped_digests" => [...], "unimportable" => {name => reason} }.
     # `digests` are secrets whose recorded value_digest was brought in line
     # with the current env value; `skipped_digests` names secrets whose
-    # digest could not be located in an editable format.
+    # digest could not be located in an editable format; `unimportable`
+    # names could never become a managed secret and were skipped by the
+    # bulk import rather than aborting it.
     # `mode` selects how --target-less imports render: :import writes
     # commented drafts the user uncomments to activate; :auto writes
-    # minimal active entries under the token defaults. Explicit targets
+    # minimal entries with all provider targets disabled, so scope comes
+    # only from the UI's token_defaults/rules layers. Explicit targets
     # always produce active targeted entries regardless of mode.
     def apply!(names, config, env_values, targets: [], mode: :targeted, at: Time.now.utc)
       validate_config_path!(config)
@@ -327,25 +346,44 @@ module CredAlignFlow
       unknown = names - candidate_names(env_values, config)
       raise ConfigError, "env names are no longer eligible for import: #{unknown.join(', ')}" unless unknown.empty?
 
+      names, rejected = partition_importable(names, bulk: targets.empty?)
+
       scope = names.empty? ? nil : scope_for_mode(config, targets, mode)
       lines = @text.lines
       digest_sync = sync_digests(lines, config, env_values)
-      if names.empty?
-        return empty_result(digest_sync) if digest_sync["digests"].empty?
+      result =
+        if names.empty?
+          replace_text!(lines.join) unless digest_sync["digests"].empty?
+          empty_result(digest_sync)
+        else
+          insertion = secrets_insertion(lines)
+          indent = insertion[:index] ? list_item_indent(lines, insertion[:index]) : 2
+          entry_builder = ScaffoldEntry.new(config, env_values, scope, at)
+          blocks = names.map { |name| entry_builder.render(name, indent, mode: mode) }
+          new_text = inserted_text(lines, insertion, blocks)
+          # Commented drafts are not real secret entries, so the
+          # generated document cannot assert their names.
+          replace_text!(new_text, mode == :import ? [] : names)
+          { "added" => names }.merge(digest_sync)
+        end
+      result["unimportable"] = rejected unless rejected.empty?
+      result
+    end
 
-        replace_text!(lines.join)
-        return empty_result(digest_sync)
+    # Bulk imports report-and-skip names that can never become a
+    # managed secret instead of aborting every importable name
+    # alongside them; explicit --target imports keep the hard
+    # validation failure from validate_generated!.
+    def partition_importable(names, bulk:)
+      return [names, {}] unless bulk
+
+      rejected = {}
+      kept = names.select do |name|
+        reason = Config.unimportable_secret_name_reason(name.upcase)
+        rejected[name] = reason if reason
+        reason.nil?
       end
-
-      insertion = secrets_insertion(lines)
-      indent = insertion[:index] ? list_item_indent(lines, insertion[:index]) : 2
-      entry_builder = ScaffoldEntry.new(config, env_values, scope, at)
-      blocks = names.map { |name| entry_builder.render(name, indent, mode: mode) }
-      new_text = inserted_text(lines, insertion, blocks)
-      # Commented drafts are not real secret entries, so the generated
-      # document cannot assert their names.
-      replace_text!(new_text, mode == :import ? [] : names)
-      { "added" => names }.merge(digest_sync)
+      [kept, rejected]
     end
 
     def inserted_text(lines, insertion, blocks)
