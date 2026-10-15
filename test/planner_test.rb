@@ -458,7 +458,142 @@ class PlannerTest < Minitest::Test
     end
   end
 
+  def test_owner_scope_plans_one_blind_item_per_source
+    Dir.mktmpdir do |dir|
+      config = build_forgejo_config(dir)
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(
+        state,
+        "forgejo-main",
+        repositories: [
+          TestSupport.repository_metadata,
+          TestSupport.repository_metadata("name" => "other", "nameWithOwner" => "example/other")
+        ],
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "forgejo-main")
+      )
+
+      items = CredAlignFlow::Planner.new(config, state, { "SONAR_TOKEN_VALUE" => "redacted" }).plan
+      owner_items = items.select { |item| item.repository == CredAlignFlow::Provider::OWNER_SCOPE_REPOSITORY }
+      repo_items = items.select { |item| item.context == "actions" }
+
+      assert_equal 1, owner_items.length
+      assert_equal "user", owner_items.first.context
+      assert_equal "create", owner_items.first.action
+      assert_includes owner_items.first.detail, "cannot be listed"
+      assert_equal %w[pull_only pull_only], repo_items.map(&:action)
+    end
+  end
+
+  def test_owner_scope_compares_against_the_applied_journal
+    Dir.mktmpdir do |dir|
+      config = build_forgejo_config(dir)
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(
+        state,
+        "forgejo-main",
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "forgejo-main")
+      )
+      state.record_application(
+        "forgejo-main", CredAlignFlow::Provider::OWNER_SCOPE_REPOSITORY, "user", "SONAR_TOKEN", "v1",
+        fingerprint: CredAlignFlow::Fingerprint.digest("SONAR_TOKEN", "redacted"),
+        source_identity: config.source_key("forgejo-main"), at: Time.utc(2026, 1, 2)
+      )
+
+      planner = CredAlignFlow::Planner.new(config, state, { "SONAR_TOKEN_VALUE" => "redacted" })
+      owner_item = planner.plan.find { |item| item.context == "user" }
+
+      assert_equal "ok", owner_item.action
+      assert_includes owner_item.detail, "not enumerable"
+    end
+  end
+
+  def test_owner_scope_update_when_the_local_value_changed
+    Dir.mktmpdir do |dir|
+      config = build_forgejo_config(dir)
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(
+        state,
+        "forgejo-main",
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "forgejo-main")
+      )
+      state.record_application(
+        "forgejo-main", CredAlignFlow::Provider::OWNER_SCOPE_REPOSITORY, "user", "SONAR_TOKEN", "v1",
+        fingerprint: CredAlignFlow::Fingerprint.digest("SONAR_TOKEN", "old-value"),
+        source_identity: config.source_key("forgejo-main"), at: Time.utc(2026, 1, 2)
+      )
+
+      planner = CredAlignFlow::Planner.new(config, state, { "SONAR_TOKEN_VALUE" => "redacted" })
+      owner_item = planner.plan.find { |item| item.context == "user" }
+
+      assert_equal "update", owner_item.action
+    end
+  end
+
+  def test_owner_scope_fails_closed_without_a_source_snapshot
+    Dir.mktmpdir do |dir|
+      config = build_forgejo_config(dir)
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+
+      planner = CredAlignFlow::Planner.new(config, state, { "SONAR_TOKEN_VALUE" => "redacted" })
+      owner_item = planner.plan.find { |item| item.context == "user" }
+
+      assert_equal "not_checked", owner_item.action
+      refute_includes planner.actionable_items, owner_item
+    end
+  end
+
+  def test_owner_scope_reports_missing_values
+    Dir.mktmpdir do |dir|
+      config = build_forgejo_config(dir)
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(
+        state,
+        "forgejo-main",
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "forgejo-main")
+      )
+
+      planner = CredAlignFlow::Planner.new(config, state, {})
+      owner_item = planner.plan.find { |item| item.context == "user" }
+
+      assert_equal "missing_value", owner_item.action
+    end
+  end
+
+  def test_owner_scope_is_excluded_by_repo_filters
+    Dir.mktmpdir do |dir|
+      config = build_forgejo_config(dir)
+      state = CredAlignFlow::State.new(File.join(dir, "inventory.json"))
+      TestSupport.seed_source(
+        state,
+        "forgejo-main",
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "forgejo-main")
+      )
+
+      planner = CredAlignFlow::Planner.new(
+        config, state, { "SONAR_TOKEN_VALUE" => "redacted" }, repo_filter: "example/repo"
+      )
+
+      assert_empty(planner.plan.select { |item| item.context == "user" })
+    end
+  end
+
   private
+
+  def build_forgejo_config(dir)
+    build_config(dir,
+                 extra_sources: {
+                   "forgejo-main" => {
+                     "type" => "forgejo",
+                     "owner" => "example",
+                     "url" => "https://forgejo.example",
+                     "user_secrets" => true
+                   }
+                 },
+                 secret_options: {
+                   "sources" => ["forgejo-main"],
+                   "targets" => { "forgejo" => %w[actions user] }
+                 })
+  end
 
   def build_config(dir, version: "2026-10-07", version_at: nil, secret_options: {}, extra_sources: {}, rules: nil)
     path = File.join(dir, "config.yml")

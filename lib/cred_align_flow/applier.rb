@@ -35,6 +35,7 @@ module CredAlignFlow
     def write_item(entry, outcomes, repository_metadata, force)
       remote_written = false
       item = entry[:item]
+      return write_owner_item(entry, outcomes) if entry[:provider].owner_scoped_context?(item.context)
       return unless repository_identity_current?(entry, outcomes, repository_metadata)
 
       remotes = remote_secret_entries(entry)
@@ -95,6 +96,36 @@ module CredAlignFlow
         return outcome(item, "skipped", "remote secret changed after the plan; refresh and review before applying")
       end
       nil
+    end
+
+    # Owner-scope stores cannot be re-read after a write, so there is no
+    # remote confirmation, count-limit recheck, or repository identity to
+    # guard — only the source identity check before journaling.
+    def write_owner_item(entry, outcomes)
+      item = entry[:item]
+      entry[:provider].set_secret(item.repository, item.context, item.secret, entry[:value])
+      record_owner_application(entry)
+      outcomes << outcome(item, "applied", "owner-scope secret written; the store is not enumerable")
+    rescue ProviderError => e
+      outcomes << outcome(item, "failed", e.message)
+    rescue StateError
+      outcomes << outcome(item, "failed",
+                          "remote write succeeded, but local application metadata could not be saved")
+    end
+
+    def record_owner_application(entry)
+      item = entry[:item]
+      @state.transaction! do |state|
+        unless state.source_identity(item.source) == entry[:source_identity]
+          raise StateError, "local source identity changed while the provider write was in progress"
+        end
+
+        state.record_application(
+          item.source, item.repository, item.context, item.secret,
+          @config.secret_version(entry[:secret]), @config.secret_version_time(entry[:secret]),
+          fingerprint: entry[:fingerprint], source_identity: entry[:source_identity]
+        )
+      end
     end
 
     def record_application(entry, applied_remote_at)
@@ -187,7 +218,9 @@ module CredAlignFlow
       end
 
       provider = provider_for(item.source)
-      return outcome(item, "skipped", "#{item.source} is pull-only; remote writes are disabled") unless provider.writable?
+      unless provider.writable?(item.context)
+        return outcome(item, "skipped", "#{item.source} is pull-only; remote writes are disabled")
+      end
 
       secret = @config.secrets.find { |entry| entry.fetch("name") == item.secret }
       return outcome(item, "skipped", "unknown secret in plan") unless secret

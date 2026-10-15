@@ -65,6 +65,7 @@ a { color: #155f9c; }
 .repo-rule-list { margin: .6rem 0; }
 .repo-rule-list summary { cursor: pointer; font-weight: 650; }
 .lock-note { color: #8a2525; font-size: .84rem; }
+.preset-conflict { color: #8a2525; font-size: .88rem; font-weight: 600; }
 .orphan-remove { margin-left: .4rem; padding: .1rem .5rem; font-size: .8rem; }
 input[type="text"], input.preset-name { border: 1px solid #8997a7; border-radius: .3rem; padding: .4rem .55rem; width: 100%; }
 .check-row { display: flex; flex-wrap: wrap; gap: .35rem .9rem; }
@@ -89,6 +90,8 @@ body:has(#tab-presets:focus-visible) .tab[for="tab-presets"] { outline: 2px soli
 @supports not (selector(body:has(*))) {
   [data-panel] { display: block; }
 }
+.preset-new-row { display: flex; flex-wrap: wrap; gap: .8rem; margin: .9rem 0 1.1rem; }
+.preset-new-card { flex: 1 1 16rem; display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; background: #fff; border: 1px solid #d6dde6; border-radius: .55rem; padding: .8rem .9rem; }
 details.fold summary { cursor: pointer; font-weight: 650; }
 .token-group-title { margin: 1.1rem 0 .4rem; }
 @media (max-width: 680px) {

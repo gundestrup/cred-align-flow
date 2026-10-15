@@ -44,7 +44,9 @@ class ScaffolderTest < Minitest::Test
       assert_includes text, "  - name: \"NEW_TOKEN\""
       assert_includes text, "    version_at: \"2026-10-09T12:00:00Z\""
       assert_includes text, "    sources: [\"github-main\"]"
-      assert_includes text, "      \"github\": [\"actions\"]"
+      assert_includes text, "      \"github\":"
+      assert_includes text, "        - \"actions\""
+      assert_includes text, "        # - \"agents\""
       assert_includes text, "    exclude_repositories:"
       assert_includes text, "      \"github-main\": [\"*\"]"
       assert_includes text, "        \"example/repo\": include"
@@ -216,6 +218,99 @@ class ScaffolderTest < Minitest::Test
 
       assert_empty result["digests"]
       assert_equal :missing, config.value_digest_status(config.secrets.first, {})
+    end
+  end
+
+  def test_auto_mode_imports_minimal_active_entries_under_the_token_defaults
+    with_config do |_dir, path|
+      config = CredAlignFlow::Config.new(path)
+      env = { "NEW_TOKEN" => "synthetic-value" }
+
+      CredAlignFlow::Scaffolder.new(path).apply!(["NEW_TOKEN"], config, env, mode: :auto)
+      text = File.read(path)
+
+      assert_includes text, "# scaffold: NEW_TOKEN"
+      assert_includes text, "  - name: \"NEW_TOKEN\""
+      assert_includes text, "imported and activated under the token defaults"
+
+      scoped = CredAlignFlow::Config.new(path)
+      secret = scoped.secrets.find { |entry| entry["name"] == "NEW_TOKEN" }
+
+      assert_equal(
+        %w[name value_env value_digest version version_at],
+        secret.keys
+      )
+      assert_equal "assigned_default", scoped.secret_assignment(secret, "github-main", TestSupport.repository_metadata).first
+      assert_equal ["actions"], scoped.contexts_for(secret, "github-main")
+    end
+  end
+
+  def test_import_mode_writes_commented_drafts_and_skips_them_later
+    with_config do |_dir, path|
+      config = CredAlignFlow::Config.new(path)
+      env = { "NEW_TOKEN" => "synthetic-value" }
+
+      CredAlignFlow::Scaffolder.new(path).apply!(["NEW_TOKEN"], config, env, mode: :import)
+      text = File.read(path)
+
+      assert_includes text, "# scaffold-draft: NEW_TOKEN"
+      assert_includes text, "  # - name: \"NEW_TOKEN\""
+      assert_includes text, "    # visibility: all"
+      assert_includes text, "      # \"github\":"
+      assert_includes text, "        # - \"actions\""
+      # Adapter-derived contexts and optional scope fields carry a second
+      # "#" so they stay commented even after the entry is activated.
+      assert_includes text, "        # # - \"agents\""
+      assert_includes text, "    # # exclude_sources:"
+      assert_includes text, "    # # exclude_repositories:"
+      assert_includes text, "    # # repository_rules:"
+      assert_equal 1, CredAlignFlow::Config.new(path).secrets.length
+
+      # A drafted name is not offered for import again.
+      scaffolder = CredAlignFlow::Scaffolder.new(path)
+
+      assert_empty scaffolder.candidates(env, CredAlignFlow::Config.new(path))
+    end
+  end
+
+  def test_uncommented_import_draft_becomes_an_active_entry
+    with_config do |_dir, path|
+      config = CredAlignFlow::Config.new(path)
+      env = { "NEW_TOKEN" => "synthetic-value" }
+
+      CredAlignFlow::Scaffolder.new(path).apply!(["NEW_TOKEN"], config, env, mode: :import)
+
+      # Simulate the user uncommenting the draft entry (not its marker).
+      uncommented = File.read(path).each_line.map do |line|
+        line.include?("# scaffold-draft:") ? line : line.sub(/\A(\s*)# /, "\\1")
+      end.join
+      File.write(path, uncommented)
+
+      scoped = CredAlignFlow::Config.new(path)
+      secret = scoped.secrets.find { |entry| entry["name"] == "NEW_TOKEN" }
+
+      refute_nil secret
+      refute secret.key?("exclude_sources")
+      refute secret.key?("exclude_repositories")
+      refute secret.key?("repository_rules")
+      assert_equal({ "github" => ["actions"] }, secret["targets"])
+      assert_equal "assigned_default", scoped.secret_assignment(secret, "github-main", TestSupport.repository_metadata).first
+    end
+  end
+
+  def test_import_mode_with_explicit_targets_writes_a_targeted_draft
+    with_config do |_dir, path|
+      config = CredAlignFlow::Config.new(path)
+      env = { "NEW_TOKEN" => "synthetic-value" }
+
+      CredAlignFlow::Scaffolder.new(path).apply!(["NEW_TOKEN"], config, env, targets: target_scope, mode: :import)
+      text = File.read(path)
+
+      assert_includes text, "# scaffold-draft: NEW_TOKEN"
+      assert_includes text, "    # exclude_repositories:"
+      assert_includes text, "      # \"github-main\": [\"*\"]"
+      assert_includes text, "        # \"example/repo\": include"
+      assert_equal 1, CredAlignFlow::Config.new(path).secrets.length
     end
   end
 

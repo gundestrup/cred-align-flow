@@ -143,6 +143,8 @@ module CredAlignFlow
     private
 
     def repo_id(repo)
+      return "" unless repo.is_a?(Hash)
+
       (repo["id"] || repo["repo_id"]).to_s
     end
 

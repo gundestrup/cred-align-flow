@@ -7,6 +7,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-15
+
 ### Added
 
 - The config UI can now edit a token's default scope (`visibility`,
@@ -31,6 +33,56 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 - `cred-align-flow ui --stop` stops a running local UI, and the server
   now holds a `.ui.lock` beside the config file so a second `ui` start
   fails fast instead of stacking listeners on the port.
+- GitHub `agents` and `codespaces` secret stores join `actions` and
+  `dependabot` as selectable target contexts. `agents` (the Copilot
+  cloud agent store) requires a recent `gh` and does not exist on GHES.
+- Repo presets now **merge** into a repository's rules instead of
+  replacing them, so presets accumulate. An entry that would change an
+  existing non-default rule is held as a conflict — the safe entries
+  still apply, the repo card lists the held entries in an error, and a
+  "Force apply" button overwrites them on retry.
+- "Clear rules" buttons: per repository (clears every token rule on
+  that repo) and per token card (clears the token's rules on every
+  repository and source). YAML rules and repository exclusions are
+  cancelled with an explicit `default`; `exclude_sources` locks are
+  untouched.
+- Built-in token presets provided by the adapters — e.g. *"GitHub:
+  Actions + Dependabot"*, *"GitHub: all contexts"*, and the Forgejo
+  pair — appear alongside the file-based presets in the config UI. They
+  are read-only, stamp scope fields like any preset, and are shadowed
+  by a custom preset of the same name.
+- `scaffold_action:` top-level config option controls what `scaffold`
+  does with unimported env names when no `--target` is given:
+  `default` keeps list-only behaviour, `import` writes commented
+  `# scaffold-draft:` blocks that stay inactive until uncommented, and
+  `auto` writes minimal active entries — identity fields only — so the
+  token defaults apply and scope is managed via the UI or by hand.
+  `import` drafts and explicit `--target` imports render the full field
+  set: every adapter-supported context is enumerated (unselected ones
+  commented), and optional scope fields appear as comments to enable,
+  delete, or change. The config UI's unimported-env notice reflects the
+  configured action.
+- Forgejo `user` target context: account-level secrets pushed blindly
+  to `/user/actions/secrets`. The Forgejo API cannot list user secrets,
+  so owner-scope targets never appear in inventory, carry no remote
+  drift status, and plan solely from the applied journal. Writes
+  require the per-source opt-in `user_secrets: true`; targeting `user`
+  without it fails config validation. There is no user-scope delete.
+- `test/consistency_test.rb` guards against option drift: every config
+  key list must appear in `config.example.yml` and `README.config.md`,
+  the generated scaffold must enumerate every adapter context and scope
+  field, and the UI/editor/help plus CLI and usage docs must cover every
+  editable field, rule action, and `scaffold_action` mode. Schema enums
+  (`VISIBILITIES`, `SCAFFOLD_ACTIONS`, `FORGEJO_OWNER_TYPES`) are now
+  `Config` constants so tests and validators share them.
+- Coverage-hardening tests for the write path and validation surfaces:
+  apply race guards (remote secrets disappearing or changing between
+  plan and write, repository/source identity changes during a write,
+  provider write failures, pull-only and write-time count-limit skips),
+  the provider contract's malformed-adapter branches, fingerprint
+  key-file fail-closed paths, GitHub source/argument validation before
+  `gh` is invoked, the UI's HTTP error mapping, and the repository
+  view's not-assigned and unexpected-remote rows.
 
 ### Changed
 
@@ -155,6 +207,7 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.1.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.1.0
 [0.0.4]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.4
 [0.0.3]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.3
 [0.0.2]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.2

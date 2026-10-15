@@ -16,6 +16,10 @@ class InventoryTest < Minitest::Test
       %w[actions dependabot]
     end
 
+    def owner_scoped_context?(_context)
+      false
+    end
+
     def validate_context!(context)
       return if contexts.include?(context)
 
@@ -36,6 +40,16 @@ class InventoryTest < Minitest::Test
     def secrets(repository, context)
       secret_calls << [repository, context]
       [{ "name" => "SONAR_TOKEN", "updatedAt" => "2026-01-01T00:00:00Z" }]
+    end
+  end
+
+  class OwnerScopeProvider < FakeProvider
+    def contexts
+      %w[actions user]
+    end
+
+    def owner_scoped_context?(context)
+      context == "user"
     end
   end
 
@@ -208,6 +222,46 @@ class InventoryTest < Minitest::Test
 
       assert_equal true, repository["explicit"]
       assert_equal true, repository["selected"]
+    end
+  end
+
+  def test_owner_scope_contexts_are_never_pulled
+    Dir.mktmpdir do |dir|
+      config_path = File.join(dir, "config.yml")
+      state_path = File.join(dir, "inventory.json")
+      File.write(config_path, <<~YAML)
+        version: 1
+        state_file: #{state_path}
+        sources:
+          forgejo-main:
+            type: forgejo
+            owner: example
+            url: https://forgejo.example
+            user_secrets: true
+        secrets:
+          - name: SONAR_TOKEN
+            value_env: SONAR_TOKEN_VALUE
+            sources: [forgejo-main]
+            targets:
+              forgejo: [actions, user]
+      YAML
+
+      provider = OwnerScopeProvider.new([repo("selected-repo", "PUBLIC", false, false, false, true)], [])
+      config = CredAlignFlow::Config.new(config_path)
+      state = CredAlignFlow::State.new(state_path)
+      inventory = CredAlignFlow::Inventory.new(config, state, {}, providers: { "forgejo-main" => provider })
+
+      inventory.refresh!
+
+      assert_equal [["example/selected-repo", "actions"]], provider.secret_calls
+      assert_empty CredAlignFlow::InventoryCheck.missing_contexts(config, state, "forgejo-main")
+      assert_equal "current",
+                   CredAlignFlow::InventoryCheck.source_status(config, state, "forgejo-main").fetch("state")
+
+      error = assert_raises(CredAlignFlow::ProviderError) do
+        inventory.refresh!(context_filter: "user")
+      end
+      assert_includes error.message, "owner-scope"
     end
   end
 

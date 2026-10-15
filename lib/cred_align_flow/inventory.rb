@@ -37,8 +37,16 @@ module CredAlignFlow
 
       repositories_config = @config.repositories_config(source_id)
       include_names = expand_include_names(repositories_config["include"], source_id)
-      contexts = @config.contexts_for_source(source_id)
+      # Owner-scope stores are not enumerable, so they are never pulled;
+      # they are planned blindly instead of contributing remote metadata.
+      contexts = @config.contexts_for_source(source_id).reject do |context|
+        provider.owner_scoped_context?(context)
+      end
       refreshed = context_filter ? contexts.select { |context| Selector.matches_filter?(context_filter, context) } : contexts
+      if context_filter && refreshed.empty? && !contexts.empty?
+        raise ProviderError,
+              "#{source_id}: context filter matched only non-enumerable owner-scope stores; nothing to pull"
+      end
 
       # Build the replacement repository map entirely from provider data
       # before touching the state lock.

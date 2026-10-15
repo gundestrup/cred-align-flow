@@ -521,6 +521,71 @@ class GitHubCliTest < Minitest::Test
     end
   end
 
+  def test_source_configuration_is_validated_before_any_gh_invocation
+    error = assert_raises(CredAlignFlow::ConfigError) do
+      CredAlignFlow::Providers::GitHub.new({ "type" => "github" }, {})
+    end
+    assert_includes error.message, "missing owner"
+
+    ["-flag-injection", "bad owner"].each do |owner|
+      assert_raises(CredAlignFlow::ConfigError) do
+        CredAlignFlow::Providers::GitHub.new({ "type" => "github", "owner" => owner }, {})
+      end
+    end
+
+    error = assert_raises(CredAlignFlow::ConfigError) do
+      CredAlignFlow::Providers::GitHub.new(
+        { "type" => "github", "owner" => "example", "api_url" => "ftp://example.test" }, {}
+      )
+    end
+    assert_includes error.message, "http(s)"
+
+    error = assert_raises(CredAlignFlow::ConfigError) do
+      CredAlignFlow::Providers::GitHub.new(
+        { "type" => "github", "owner" => "example", "api_url" => "https://not a url" }, {}
+      )
+    end
+    assert_includes error.message, "api_url/url"
+
+    assert_raises(CredAlignFlow::ConfigError) do
+      CredAlignFlow::Providers::GitHub.new(
+        { "type" => "github", "owner" => "example", "host" => "-bad" }, {}
+      )
+    end
+  end
+
+  def test_argument_validation_rejects_flag_like_or_malformed_names
+    provider = CredAlignFlow::Providers::GitHub.new(
+      { "type" => "github", "owner" => "example" }, {}
+    )
+
+    # The reserved GITHUB_ prefix, a leading digit, and a hyphen are all
+    # invalid secret names; each must fail before gh is invoked.
+    %w[GITHUB_TOKEN 2BAD BAD-NAME].each do |name|
+      assert_raises(CredAlignFlow::ProviderError) do
+        provider.set_secret("example/repo", "actions", name, "v")
+      end
+    end
+
+    assert_raises(CredAlignFlow::ProviderError) do
+      provider.set_secret("-evil", "actions", "OK_NAME", "v")
+    end
+    assert_raises(CredAlignFlow::ProviderError) { provider.repository("-f") }
+    assert_raises(CredAlignFlow::ProviderError) { provider.secrets("bad repo", "actions") }
+    assert_raises(CredAlignFlow::ProviderError) { provider.secrets("example/repo", "bogus") }
+  end
+
+  def test_malformed_or_duplicate_secret_listing_fails_closed
+    remote = { "example/repo|actions" => [{ "name" => "DUP_TOKEN" }, { "name" => "dup_token" }] }
+    with_workspace(contexts: ["actions"], remote_secrets: remote) do |workspace|
+      stdout, stderr, status = invoke(workspace, "pull")
+
+      assert_equal 1, status.exitstatus
+      assert_includes stderr, "malformed or duplicate"
+      refute_includes stdout + stderr, TEST_AUTH_TOKEN
+    end
+  end
+
   private
 
   def with_workspace(

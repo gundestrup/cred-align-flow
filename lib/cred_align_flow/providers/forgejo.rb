@@ -9,8 +9,20 @@ require "uri"
 module CredAlignFlow
   module Providers
     class Forgejo < Provider
-      CONTEXTS = %w[actions].freeze
+      CONTEXTS = %w[actions user].freeze
+      # Owner-scope contexts address the authenticated account's store
+      # rather than a repository's. Forgejo user secrets at
+      # /user/actions/secrets are write-only (no list endpoint), so this
+      # context never participates in inventory or drift detection and is
+      # pushed blindly — deletion is intentionally not offered.
+      OWNER_CONTEXTS = %w[user].freeze
       WRITABLE = false
+      USER_SECRET_NAME_PATTERN = /\A[A-Za-z_][A-Za-z0-9_]*\z/
+
+      TOKEN_PRESETS = {
+        "Forgejo: repository Actions" => { "targets" => { "forgejo" => %w[actions] } },
+        "Forgejo: user scope" => { "targets" => { "forgejo" => %w[user] } }
+      }.freeze
       PAGE_SIZE = 100
       MAX_PAGES = 50
       OPEN_TIMEOUT = 10
@@ -52,6 +64,13 @@ module CredAlignFlow
         false
       end
 
+      # Opt-in gate: `user_secrets: true` on the source enables blind
+      # pushes to the account-level user-secret store. Since the API
+      # cannot list them, applies are unverifiable by design.
+      def self.owner_scope_writable?(source)
+        source.is_a?(Hash) && source["user_secrets"] == true
+      end
+
       def initialize(source, env_values)
         super()
         @source = source
@@ -71,8 +90,16 @@ module CredAlignFlow
         normalize_repository(response)
       end
 
+      def owner_scope_writable?
+        self.class.owner_scope_writable?(@source)
+      end
+
       def secrets(repository, context)
         validate_context!(context)
+        if owner_scoped_context?(context)
+          raise ProviderError, "Forgejo user-scope secrets cannot be listed; the API is write-only"
+        end
+
         owner, repo = repository_parts(repository)
         paged_get("/repos/#{escape(owner)}/#{escape(repo)}/actions/secrets").map do |secret|
           unless secret.is_a?(Hash) && secret["name"].is_a?(String) && !secret["name"].empty?
@@ -86,8 +113,16 @@ module CredAlignFlow
         end
       end
 
-      def set_secret(_repository, _context, _name, _value)
-        raise ProviderError, "Forgejo provider is pull-only; remote writes are not enabled"
+      def set_secret(_repository, context, name, value)
+        unless owner_scoped_context?(context)
+          raise ProviderError, "Forgejo provider is pull-only for repository secrets; remote writes are not enabled"
+        end
+        raise ProviderError, "Forgejo user-scope writes require `user_secrets: true` on the source" unless owner_scope_writable?
+        unless name.is_a?(String) && name.match?(USER_SECRET_NAME_PATTERN)
+          raise ProviderError, "invalid Forgejo secret name #{name.to_s[0, 40].inspect}"
+        end
+
+        put_secret("/user/actions/secrets/#{escape(name)}", value)
       end
 
       def cli_version
@@ -146,10 +181,30 @@ module CredAlignFlow
       end
 
       def request_json(path, query = {})
-        uri = URI.parse("#{@api_base}#{path}")
+        uri = api_uri(path)
         uri.query = URI.encode_www_form(query) unless query.empty?
+        response = http_request(Net::HTTP::Get.new(uri), path)
+        [JSON.parse(response.body.to_s), response.each_header.to_h]
+      rescue JSON::ParserError
+        raise ProviderError, "Invalid Forgejo JSON response for #{path}"
+      end
 
-        request = Net::HTTP::Get.new(uri)
+      # The write body carries the secret value; nothing from the request
+      # or response is surfaced in errors beyond the status code.
+      def put_secret(path, value)
+        request = Net::HTTP::Put.new(api_uri(path))
+        request["Content-Type"] = "application/json"
+        request.body = JSON.generate("data" => value)
+        http_request(request, path)
+        nil
+      end
+
+      def api_uri(path)
+        URI.parse("#{@api_base}#{path}")
+      end
+
+      def http_request(request, path)
+        uri = request.uri
         request["Accept"] = "application/json"
         request["Authorization"] = "token #{auth_token}" unless auth_token.to_s.empty?
 
@@ -165,11 +220,11 @@ module CredAlignFlow
 
         # Response bodies are never surfaced: a proxy or misconfigured
         # service could reflect the Authorization token back in an error.
-        raise ProviderError, "Forgejo GET #{path} returned HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+        unless response.is_a?(Net::HTTPSuccess)
+          raise ProviderError, "Forgejo #{request.method} #{path} returned HTTP #{response.code}"
+        end
 
-        [JSON.parse(response.body.to_s), response.each_header.to_h]
-      rescue JSON::ParserError
-        raise ProviderError, "Invalid Forgejo JSON response for #{path}"
+        response
       rescue OpenSSL::SSL::SSLError => e
         raise ProviderError, "Forgejo TLS error for #{@api_base}: #{e.message}"
       rescue SystemCallError, SocketError, Timeout::Error => e

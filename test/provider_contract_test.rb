@@ -16,6 +16,26 @@ class ProviderContractTest < Minitest::Test
     end
   end
 
+  def test_builtin_token_presets_only_reference_own_contexts
+    ADAPTERS.each_value do |adapter_class|
+      next unless adapter_class.const_defined?(:TOKEN_PRESETS, false)
+
+      adapter_class::TOKEN_PRESETS.each do |name, fields|
+        assert_kind_of Hash, fields, "preset #{name}"
+        (fields["targets"] || {}).each_value do |contexts|
+          assert_empty Array(contexts) - adapter_class::CONTEXTS,
+                       "preset #{name} names contexts outside the adapter"
+        end
+      end
+    end
+  end
+
+  def test_owner_contexts_are_a_subset_of_contexts
+    ADAPTERS.each_value do |adapter_class|
+      assert_empty adapter_class.owner_scoped_contexts - adapter_class::CONTEXTS
+    end
+  end
+
   def test_registry_builds_adapter_by_source_type
     adapter = CredAlignFlow::Providers.build(
       { "type" => "github", "owner" => "example", "api_url" => "https://api.github.com" },
@@ -23,7 +43,7 @@ class ProviderContractTest < Minitest::Test
     )
 
     assert_instance_of CredAlignFlow::Providers::GitHub, adapter
-    assert_equal %w[actions dependabot], adapter.contexts
+    assert_equal %w[actions agents codespaces dependabot], adapter.contexts
 
     forgejo = CredAlignFlow::Providers.build(
       { "type" => "forgejo", "owner" => "example", "url" => "https://forgejo.example" },
@@ -31,8 +51,23 @@ class ProviderContractTest < Minitest::Test
     )
 
     assert_instance_of CredAlignFlow::Providers::Forgejo, forgejo
-    assert_equal %w[actions], forgejo.contexts
+    assert_equal %w[actions user], forgejo.contexts
     refute_predicate forgejo, :writable?
+    refute forgejo.writable?("user")
+  end
+
+  def test_forgejo_owner_scope_writes_require_the_source_opt_in
+    forgejo = CredAlignFlow::Providers.build(
+      { "type" => "forgejo", "owner" => "example", "url" => "https://forgejo.example",
+        "user_secrets" => true },
+      {}
+    )
+
+    assert forgejo.writable?("user")
+    refute forgejo.writable?("actions")
+    assert CredAlignFlow::Providers.owner_scoped_context?("forgejo", "user")
+    refute CredAlignFlow::Providers.owner_scoped_context?("forgejo", "actions")
+    refute CredAlignFlow::Providers.owner_scoped_context?("github", "actions")
   end
 
   def test_unknown_source_type_reports_supported_adapters
@@ -83,5 +118,93 @@ class ProviderContractTest < Minitest::Test
     end
 
     assert_includes error.message, "CONTEXTS"
+  end
+
+  def test_contract_rejects_non_provider_classes
+    [String, "github", nil].each do |candidate|
+      error = assert_raises(CredAlignFlow::ProviderError) do
+        CredAlignFlow::Provider.assert_contract!(candidate)
+      end
+
+      assert_includes error.message, "must subclass CredAlignFlow::Provider"
+    end
+  end
+
+  def test_contract_rejects_malformed_token_presets
+    adapter = conforming_adapter
+    adapter.const_set(:TOKEN_PRESETS, ["not-a-hash"])
+
+    error = assert_raises(CredAlignFlow::ProviderError) do
+      CredAlignFlow::Provider.assert_contract!(adapter)
+    end
+
+    assert_includes error.message, "TOKEN_PRESETS must map preset names to scope-field hashes"
+  end
+
+  def test_contract_rejects_malformed_owner_contexts
+    bad_type = conforming_adapter
+    bad_type.const_set(:OWNER_CONTEXTS, "user")
+
+    error = assert_raises(CredAlignFlow::ProviderError) do
+      CredAlignFlow::Provider.assert_contract!(bad_type)
+    end
+
+    assert_includes error.message, "OWNER_CONTEXTS must be an array of context names"
+
+    outside = conforming_adapter
+    outside.const_set(:OWNER_CONTEXTS, %w[external])
+
+    error = assert_raises(CredAlignFlow::ProviderError) do
+      CredAlignFlow::Provider.assert_contract!(outside)
+    end
+
+    assert_includes error.message, "OWNER_CONTEXTS must be a subset of CONTEXTS"
+  end
+
+  def test_base_provider_stubs_raise_not_implemented
+    provider = CredAlignFlow::Provider.new
+
+    assert_raises(NotImplementedError) { provider.repositories }
+    assert_raises(NotImplementedError) { provider.repository("example/repo") }
+    assert_raises(NotImplementedError) { provider.secrets("example/repo", "actions") }
+    assert_raises(NotImplementedError) { provider.set_secret("example/repo", "actions", "TOKEN", "value") }
+  end
+
+  def test_base_provider_defaults
+    provider = CredAlignFlow::Provider.new
+
+    assert_predicate provider, :writable?
+    refute_predicate provider, :owner_scope_writable?
+    refute CredAlignFlow::Provider.owner_scope_writable?({})
+    refute provider.owner_scoped_context?("user")
+    assert_nil provider.cli_version
+    assert_nil provider.readiness
+
+    error = assert_raises(CredAlignFlow::ProviderError) { provider.validate_context!("actions") }
+
+    assert_includes error.message, "does not support context"
+  end
+
+  def test_redact_scrubs_env_values_from_adapter_output
+    provider = CredAlignFlow::Provider.new
+    provider.instance_variable_set(
+      :@env_values, { "TOKEN" => "super-secret-value", "SHORT" => "abc" }
+    )
+
+    # Values under 8 characters are not treated as sensitive material —
+    # scrubbing short strings would mangle legitimate words in output.
+    assert_equal "[redacted] and abc", provider.send(:redact, "super-secret-value and abc")
+  end
+
+  private
+
+  def conforming_adapter
+    Class.new(CredAlignFlow::Provider).tap do |adapter|
+      adapter.const_set(:CONTEXTS, %w[actions])
+      adapter.define_method(:repositories) { [] }
+      adapter.define_method(:repository) { |_name| {} }
+      adapter.define_method(:secrets) { |_repository, _context| [] }
+      adapter.define_method(:set_secret) { |_repository, _context, _name, _value| true }
+    end
   end
 end

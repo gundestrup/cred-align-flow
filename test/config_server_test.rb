@@ -287,6 +287,169 @@ class ConfigServerTest < Minitest::Test
     )
   end
 
+  def test_ui_repo_presets_accumulate_across_applications
+    stdout = run_ui_scenario(<<~JAVASCRIPT)
+      (async () => {
+        const initial = view("initial");
+        initial.secrets = [
+          { config: { name: "A_TOKEN" } },
+          { config: { name: "B_TOKEN" } },
+          { config: { name: "C_TOKEN" } }
+        ];
+        initial.repo_presets = {
+          first: { A_TOKEN: "include" },
+          second: { B_TOKEN: "exclude", C_TOKEN: "include" }
+        };
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        const repo = { name: "example/repo", rule_modes: {}, rule_sources: {}, legacy_exclusions: {}, locked_sources: {} };
+        // The second preset must not undo what the first stamped.
+        sandbox.applyRepoPreset("src", repo, "first");
+        sandbox.applyRepoPreset("src", repo, "second");
+        const save = elements.get("save")._handlers.click();
+        pending[1]({ ok: true, status: 200, json: async () => view("saved") });
+        await save;
+        process.stdout.write(JSON.stringify(bodies[requests.indexOf("/api/save")].rules));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    assert_equal(
+      { "src" => { "example/repo" => { "A_TOKEN" => "include", "B_TOKEN" => "exclude", "C_TOKEN" => "include" } } },
+      JSON.parse(stdout)
+    )
+  end
+
+  def test_ui_repo_preset_holds_conflicts_and_applies_safe_entries
+    stdout = run_ui_scenario(<<~JAVASCRIPT)
+      (async () => {
+        const initial = view("initial");
+        initial.secrets = [
+          { config: { name: "A_TOKEN" } },
+          { config: { name: "B_TOKEN" } },
+          { config: { name: "C_TOKEN" } }
+        ];
+        initial.rules = { src: { "example/repo": { A_TOKEN: "include", B_TOKEN: "exclude" } } };
+        initial.repo_presets = { tighten: { A_TOKEN: "exclude", B_TOKEN: "exclude", C_TOKEN: "include" } };
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        const repo = {
+          name: "example/repo",
+          rule_modes: { A_TOKEN: "include", B_TOKEN: "exclude" },
+          rule_sources: { A_TOKEN: "rules", B_TOKEN: "rules" },
+          legacy_exclusions: {},
+          locked_sources: {}
+        };
+        // A_TOKEN conflicts (include vs exclude); B_TOKEN already
+        // matches; C_TOKEN has no rule and applies safely.
+        sandbox.applyRepoPreset("src", repo, "tighten");
+        const held = elements.get("message").textContent;
+        const firstSave = elements.get("save")._handlers.click();
+        const savedOnce = view("saved");
+        savedOnce.secrets = initial.secrets;
+        savedOnce.repo_presets = initial.repo_presets;
+        savedOnce.rules = { src: { "example/repo": { A_TOKEN: "include", B_TOKEN: "exclude", C_TOKEN: "include" } } };
+        pending[1]({ ok: true, status: 200, json: async () => savedOnce });
+        await firstSave;
+        const safeOnly = bodies[requests.lastIndexOf("/api/save")].rules;
+        // Force apply overwrites the conflicting entry.
+        sandbox.applyRepoPreset("src", repo, "tighten", true);
+        const secondSave = elements.get("save")._handlers.click();
+        pending[2]({ ok: true, status: 200, json: async () => view("saved-again") });
+        await secondSave;
+        const forced = bodies[requests.lastIndexOf("/api/save")].rules;
+        process.stdout.write(JSON.stringify({ held: held, safeOnly: safeOnly, forced: forced }));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    result = JSON.parse(stdout)
+
+    assert_includes result.fetch("held"), "A_TOKEN"
+    assert_equal(
+      { "src" => { "example/repo" => { "A_TOKEN" => "include", "B_TOKEN" => "exclude", "C_TOKEN" => "include" } } },
+      result.fetch("safeOnly")
+    )
+    assert_equal(
+      { "src" => { "example/repo" => { "A_TOKEN" => "exclude", "B_TOKEN" => "exclude", "C_TOKEN" => "include" } } },
+      result.fetch("forced")
+    )
+  end
+
+  def test_ui_clear_repo_rules_removes_saved_rules_and_neutralizes_yaml
+    stdout = run_ui_scenario(<<~JAVASCRIPT)
+      (async () => {
+        const initial = view("initial");
+        initial.secrets = [
+          { config: { name: "A_TOKEN" } },
+          { config: { name: "B_TOKEN" } },
+          { config: { name: "C_TOKEN" } },
+          { config: { name: "D_TOKEN" } }
+        ];
+        initial.rules = { src: { "example/repo": { A_TOKEN: "include", B_TOKEN: "exclude" } } };
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        const repo = {
+          name: "example/repo",
+          rule_modes: { A_TOKEN: "include", B_TOKEN: "exclude", C_TOKEN: "include" },
+          rule_sources: { A_TOKEN: "rules", B_TOKEN: "rules", C_TOKEN: "yaml" },
+          legacy_exclusions: {},
+          locked_sources: { D_TOKEN: true }
+        };
+        sandbox.clearRepoRules("src", repo);
+        const save = elements.get("save")._handlers.click();
+        pending[1]({ ok: true, status: 200, json: async () => view("saved") });
+        await save;
+        const body = bodies[requests.indexOf("/api/save")];
+        process.stdout.write(JSON.stringify(body.rules));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    # Saved rules are deleted outright; the YAML rule needs an explicit
+    # "default" to cancel it; the locked token is untouched.
+    assert_equal(
+      { "src" => { "example/repo" => { "C_TOKEN" => "default" } } },
+      JSON.parse(stdout)
+    )
+  end
+
+  def test_ui_clear_token_rules_spans_repositories
+    stdout = run_ui_scenario(<<~JAVASCRIPT)
+      (async () => {
+        const initial = view("initial");
+        initial.secrets = [{ config: { name: "A_TOKEN" } }, { config: { name: "B_TOKEN" } }];
+        initial.rules = {
+          src: { "example/one": { A_TOKEN: "include", B_TOKEN: "include" }, "example/two": { A_TOKEN: "include" } }
+        };
+        const repoFixture = (name) => ({
+          name: name, anchor: name, visibility: "public", selected: true, admin: true,
+          rule_modes: {}, rule_sources: { A_TOKEN: "rules", B_TOKEN: "rules" },
+          legacy_exclusions: {}, locked_sources: {}, crosses_scope: {},
+          assigned: [], not_assigned: [], unexpected: []
+        });
+        initial.sources = [{ id: "src", repositories: [repoFixture("example/one"), repoFixture("example/two")] }];
+        pending[0]({ ok: true, status: 200, json: async () => initial });
+        await new Promise((resolve) => setImmediate(resolve));
+        sandbox.clearTokenRules("A_TOKEN");
+        const save = elements.get("save")._handlers.click();
+        pending[1]({ ok: true, status: 200, json: async () => view("saved") });
+        await save;
+        process.stdout.write(JSON.stringify(bodies[requests.indexOf("/api/save")].rules));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    assert_equal(
+      { "src" => { "example/one" => { "B_TOKEN" => "include" } } },
+      JSON.parse(stdout)
+    )
+  end
+
   def test_ui_groups_tokens_by_shared_prefix_when_three_or_more
     stdout = run_ui_scenario(<<~JAVASCRIPT)
       (async () => {
@@ -363,6 +526,100 @@ class ConfigServerTest < Minitest::Test
 
       assert_equal 403, bad_host.first
       assert_equal 403, remote_address.first
+    end
+  end
+
+  def test_ui_port_is_validated
+    ["eighty", 0, 70_000, -1].each do |port|
+      assert_raises(CredAlignFlow::ConfigError) do
+        CredAlignFlow::ConfigServer.new(editor: nil, port: port)
+      end
+    end
+  end
+
+  def test_rack_app_maps_request_and_editor_errors_to_status_codes
+    with_rack_app do |app, config_path, _checker|
+      _status, _headers, data_body = call(app, "GET", "/api/data")
+      view = JSON.parse(data_body.join)
+      token = view.fetch("csrf")
+      origin = "http://127.0.0.1:8043"
+
+      status, _h, body = call(app, "GET", "/no-such-endpoint")
+
+      assert_equal 404, status
+      assert_includes body.join, "not found"
+
+      status, _h, body = call(app, "POST", "/api/save", origin: origin, body: "{}")
+
+      assert_equal 403, status
+      assert_includes body.join, "request token"
+
+      status, _h, body = call(app, "POST", "/api/save", origin: "https://attacker.example",
+                                                        token: token, body: "{}")
+
+      assert_equal 403, status
+      assert_includes body.join, "must originate"
+
+      status, _h, body = call(app, "POST", "/api/save", origin: origin, token: token,
+                                                        content_type: "text/plain", body: "{}")
+
+      assert_equal 400, status
+      assert_includes body.join, "application/json"
+
+      status, _h, body = call(app, "POST", "/api/save", origin: origin, token: token, body: "{ nope")
+
+      assert_equal 400, status
+      assert_includes body.join, "invalid request body"
+
+      status, _h, body = call(
+        app, "POST", "/api/save", origin: origin, token: token,
+                                  content_length: (CredAlignFlow::ConfigRackApp::MAX_BODY_BYTES + 1).to_s, body: "{}"
+      )
+
+      assert_equal 413, status
+      assert_includes body.join, "too large"
+
+      status, _h, _body = call(app, "POST", "/api/save", origin: origin, token: token,
+                                                         body: JSON.generate("revision" => "x", "rules" => {}))
+
+      assert_equal 422, status
+
+      # A rules file written after the view was loaded conflicts.
+      rules_path = CredAlignFlow::Rules.default_path_for(config_path)
+      File.write(rules_path, JSON.generate("version" => 1, "rules" => {}))
+      save_payload = {
+        "revision" => view.fetch("revision"),
+        "rules" => {}, "token_defaults" => {}, "token_presets" => {}, "repo_presets" => {}
+      }
+      status, _h, _body = call(app, "POST", "/api/save", origin: origin, token: token,
+                                                         body: JSON.generate(save_payload))
+
+      assert_equal 409, status
+    end
+  end
+
+  def test_rack_app_maps_provider_and_unexpected_failures
+    [
+      [CredAlignFlow::ProviderError.new("synthetic provider failure"), 422, "inventory refresh failed"],
+      [RuntimeError.new("synthetic crash"), 500, "request failed"]
+    ].each do |error, expected_status, expected_detail|
+      provider = Class.new do
+        define_method(:contexts) { %w[actions] }
+        define_method(:owner_scoped_context?) { |_context| false }
+        define_method(:validate_context!) { |_context| true }
+        define_method(:repositories) { raise error }
+      end.new
+      with_rack_app(providers: { "github-main" => provider }) do |app, _config_path, _checker|
+        _status, _h, data_body = call(app, "GET", "/api/data")
+        view = JSON.parse(data_body.join)
+        status, _h, body = call(
+          app, "POST", "/api/inventory", origin: "http://127.0.0.1:8043",
+                                         token: view.fetch("csrf"), body: JSON.generate("revision" => view.fetch("revision"))
+        )
+
+        assert_equal expected_status, status
+        assert_includes body.join, expected_detail
+      end
     end
   end
 
@@ -486,14 +743,15 @@ class ConfigServerTest < Minitest::Test
   end
 
   def assert_repo_preset_stamping(script)
-    apply = script[/function applyRepoPreset\(sourceId, repo, presetName\) \{.*?\n    \}/m]
+    apply = script[/function applyRepoPreset\(sourceId, repo, presetName, force\) \{.*?\n    \}/m]
 
     assert(apply)
     assert_includes apply, 'fields["*"]'
     assert_includes apply, "locked_sources"
   end
 
-  def call(app, method, path, body: nil, origin: nil, token: nil, host: "127.0.0.1:8043", remote_address: "127.0.0.1")
+  def call(app, method, path, body: nil, origin: nil, token: nil, host: "127.0.0.1:8043",
+           remote_address: "127.0.0.1", content_type: nil, content_length: nil)
     app.call(
       "REQUEST_METHOD" => method,
       "PATH_INFO" => path,
@@ -504,13 +762,13 @@ class ConfigServerTest < Minitest::Test
       "HTTP_HOST" => host,
       "HTTP_ORIGIN" => origin,
       "HTTP_X_CRED_ALIGN_TOKEN" => token,
-      "CONTENT_TYPE" => body ? "application/json" : "",
-      "CONTENT_LENGTH" => body ? body.bytesize.to_s : "0",
+      "CONTENT_TYPE" => content_type || (body ? "application/json" : ""),
+      "CONTENT_LENGTH" => content_length || (body ? body.bytesize.to_s : "0"),
       "rack.input" => StringIO.new(body.to_s)
     )
   end
 
-  def with_rack_app(check_for_updates: false, update_notice_min_age_days: nil)
+  def with_rack_app(check_for_updates: false, update_notice_min_age_days: nil, providers: {})
     Dir.mktmpdir do |dir|
       config_path = File.join(dir, "config.yml")
       env_path = File.join(dir, ".env.local")
@@ -530,7 +788,8 @@ class ConfigServerTest < Minitest::Test
       editor = CredAlignFlow::ConfigEditor.new(
         config_path: config_path,
         env_path: env_path,
-        state_path: state_path
+        state_path: state_path,
+        providers: providers
       )
       checker = FakeReleaseChecker.new("v0.0.2")
       app = CredAlignFlow::ConfigRackApp.new(editor: editor, port: 8043, release_checker: checker)

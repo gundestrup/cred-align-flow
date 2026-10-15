@@ -6,6 +6,32 @@ module CredAlignFlow
     WRITABLE = true
     MAX_SECRET_VALUE_BYTES = nil
     MAX_REPOSITORY_SECRETS = nil
+    # Synthetic plan/state key for contexts that address an owner-level
+    # store instead of a repository's (e.g. Forgejo user-scope secrets).
+    # It is not a valid owner/name, so it can never collide with a real
+    # repository in state or inventory data.
+    OWNER_SCOPE_REPOSITORY = "@owner"
+
+    def self.owner_scoped_contexts
+      const_defined?(:OWNER_CONTEXTS, false) ? const_get(:OWNER_CONTEXTS) : []
+    end
+
+    def self.owner_scoped_context?(context)
+      owner_scoped_contexts.include?(context.to_s)
+    end
+
+    # The repository-scoped context a generated default should use —
+    # owner/account scopes are never a default.
+    def self.default_context
+      (self::CONTEXTS - owner_scoped_contexts).first
+    end
+
+    # Whether a source configuration permits writes to the owner-scope
+    # store. Adapters with an owner-level context override this; the
+    # default refuses.
+    def self.owner_scope_writable?(_source)
+      false
+    end
 
     def self.assert_contract!(adapter_class)
       unless adapter_class.is_a?(Class) && adapter_class < self
@@ -19,10 +45,34 @@ module CredAlignFlow
       raise ProviderError, "#{adapter_class} is missing provider methods: #{missing.join(', ')}" unless missing.empty?
 
       contexts = adapter_class.const_defined?(:CONTEXTS, false) ? adapter_class::CONTEXTS : nil
-      return if contexts.is_a?(Array) && contexts.all?(String) && !contexts.empty?
+      unless contexts.is_a?(Array) && contexts.all?(String) && !contexts.empty?
+        raise ProviderError, "#{adapter_class} must define a nonempty CONTEXTS array"
+      end
 
-      raise ProviderError, "#{adapter_class} must define a nonempty CONTEXTS array"
+      assert_presets_contract!(adapter_class)
+      assert_owner_contexts_contract!(adapter_class)
     end
+
+    def self.assert_presets_contract!(adapter_class)
+      return unless adapter_class.const_defined?(:TOKEN_PRESETS, false)
+
+      presets = adapter_class::TOKEN_PRESETS
+      return if presets.is_a?(Hash) && presets.keys.all?(String) && presets.values.all?(Hash)
+
+      raise ProviderError, "#{adapter_class} TOKEN_PRESETS must map preset names to scope-field hashes"
+    end
+    private_class_method :assert_presets_contract!
+
+    def self.assert_owner_contexts_contract!(adapter_class)
+      owner_contexts = adapter_class.owner_scoped_contexts
+      unless owner_contexts.is_a?(Array) && owner_contexts.all?(String)
+        raise ProviderError, "#{adapter_class} OWNER_CONTEXTS must be an array of context names"
+      end
+      return if (owner_contexts - adapter_class::CONTEXTS).empty?
+
+      raise ProviderError, "#{adapter_class} OWNER_CONTEXTS must be a subset of CONTEXTS"
+    end
+    private_class_method :assert_owner_contexts_contract!
 
     def repositories
       raise NotImplementedError, "#{self.class} must implement repositories"
@@ -50,7 +100,17 @@ module CredAlignFlow
       raise ProviderError, "#{self.class} does not support context #{context.inspect}"
     end
 
-    def writable?
+    def owner_scoped_context?(context)
+      self.class.owner_scoped_context?(context)
+    end
+
+    def owner_scope_writable?
+      false
+    end
+
+    def writable?(context = nil)
+      return owner_scope_writable? if context && owner_scoped_context?(context)
+
       self.class::WRITABLE
     end
 

@@ -59,8 +59,10 @@ module CredAlignFlow
        "Which sources (e.g. github-main, forgejo-main) the token applies to; no selection (or \"all\") " \
        "means every configured source."],
       ["Targets",
-       "Provider secret stores per source type — GitHub `actions` and `dependabot`, Forgejo `actions`. " \
-       "Sources marked pull-only cannot receive writes at all."],
+       "Provider secret stores per source type — GitHub `actions`, `agents`, `codespaces`, and " \
+       "`dependabot`, Forgejo `actions` and `user`. Forgejo `user` targets the account-level " \
+       "store, which the API cannot list: pushes are blind and require `user_secrets: true` on " \
+       "the source. Sources marked pull-only cannot receive repository writes at all."],
       ["Token default overrides",
        "The editable fields on a token card write `token_defaults` entries in the rules file. A field " \
        "set here replaces the same YAML field; fields marked `override` differ from the hand-edited " \
@@ -68,12 +70,21 @@ module CredAlignFlow
        "`exclude_sources` stay YAML-only — exclusions there always win. A comma-separated exclusion " \
        "list applies to all sources; per-source exclusion maps remain YAML-only."],
       ["Token presets",
-       "Named scope templates in the token preset file. Applying one on a token card copies its " \
-       "fields into that token's overrides — later preset edits do not change tokens already stamped."],
+       "Named scope templates in the token preset file, plus read-only built-ins provided by the " \
+       "configured adapters. Applying one on a token card copies its fields into that token's " \
+       "overrides — later preset edits do not change tokens already stamped. A custom preset with " \
+       "a built-in's name shadows it."],
       ["Repository presets",
        "Named `token => rule` bundles in the repo preset file; `*` covers every token not listed. " \
-       "Applying one on a repository card stamps those rules onto that repo — later preset edits " \
-       "do not re-apply."],
+       "Applying one on a repository card merges those rules into the repo's rules, so presets " \
+       "accumulate — later preset edits do not re-apply. An entry that would change an existing " \
+       "non-default rule is held as a conflict: the safe entries still apply and \"Force apply\" " \
+       "overwrites the conflicting ones."],
+      ["Clearing rules",
+       "\"Clear rules\" on a repository card removes every token rule there, and \"Clear repository " \
+       "rules\" on a token card removes that token's rules on every repository and source. YAML rules " \
+       "and repository exclusions get an explicit `default` that cancels them; `exclude_sources`-locked " \
+       "tokens stay untouched."],
       ["Hard vs soft exclusions",
        "`exclude_sources` and source repository filters are hard boundaries — no rule can cross them. " \
        "`exclude_repositories` and YAML repository rules are overridable defaults — an `include` or " \

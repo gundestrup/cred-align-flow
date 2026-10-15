@@ -67,7 +67,7 @@ Run the apply flow without writing remote secrets:
 bin/cred-align-flow apply --dry-run
 ```
 
-`scaffold` refreshes existing value digests and lists unimported env names; it does not import names unless `--only` is supplied. Imports remain active entries, but require an exact destination tuple for every reviewed target:
+`scaffold` refreshes existing value digests and lists unimported env names; with the default `scaffold_action` it does not import names unless `--only` is supplied. Imports remain active entries, but require an exact destination tuple for every reviewed target:
 
 ```bash
 bin/cred-align-flow scaffold
@@ -79,6 +79,16 @@ bin/cred-align-flow scaffold --digests-only
 
 Each `--target` is one argument in the form `SOURCE|CONTEXT|OWNER/REPO`; quote it so the shell does not interpret `|`. `--only` is required to import, and the command prints the selected names and exact destinations before editing YAML. A scaffolded definition is active only for those repositories and contexts; other repositories for that source are excluded by default. The current config schema applies target contexts per provider type, so all selected repositories for a source must use the same context set and sources of the same provider type must use the same context set. Unsupported combinations are rejected instead of broadened. `--ignore` persists names in `ignored_env_names:` and excludes them immediately, including in the same invocation. Active definitions, not provenance comments, determine whether a name is already managed. The generated YAML is parsed and validated while holding a lock before atomic replacement; unsupported layouts fail without replacing the original. `--digests-only` never imports new names.
 
+The top-level `scaffold_action:` setting changes what happens when names are imported **without** `--target` tuples:
+
+- `default` (the default): imports require `--only` plus `--target`; plain `scaffold` only lists unimported names.
+- `import`: `scaffold` (all names) or `scaffold --only NAMES` writes the entries into the YAML as **commented draft blocks** marked `# scaffold-draft:` — they stay inactive until you uncomment each entry. Drafted names are not offered again.
+
+Imports under `import` or explicit `--target` tuples write the **full field set** so every option is visible: `visibility` (with its enum), `sources`, `targets` listing every context each configured provider supports (unselected contexts and owner scopes stay commented, e.g. Forgejo `user` notes its `user_secrets: true` requirement), the real `exclude_repositories`/`repository_rules` narrowing for targeted imports, and optional `exclude_sources`/narrowing templates as comments. Inside a draft block, comment lines carry a second `#` (`# #`), so removing one `# ` per line activates the entry while optional fields stay commented for the user to enable, delete, or change.
+- `auto`: imports and **activates** the entries as minimal definitions — only `name`/`value_env`, digest, and version are written, so the token defaults apply (all sources, `visibility: public`, each provider's implicit context — GitHub `actions`; Forgejo sources need a `targets` entry, e.g. stamped by the UI's built-in Forgejo preset). Scope is then managed in the UI (`token_defaults`, presets, repo rules) or by editing the YAML.
+
+Explicit `--target` tuples always produce active targeted entries, whatever the action.
+
 ## Plan statuses
 
 - `create`: expected remote secret is missing.
@@ -86,9 +96,11 @@ Each `--target` is one argument in the form `SOURCE|CONTEXT|OWNER/REPO`; quote i
 - `remote_newer`: remote `updated_at` is newer than the recorded local `applied_at` — the remote changed after our last write. Use `apply --force` to overwrite it.
 - `update`: the desired value fingerprint differs from the fingerprint recorded at the last apply (a rotated value), or — for older records without a fingerprint — the configured `version` differs from the recorded one.
 - `ok`: the target is managed and the recorded fingerprint (or version, for legacy records) is current.
-- `pull_only`: the target's source is read-only (Forgejo); the state is reported but never written.
+- `pull_only`: the target's source is read-only (Forgejo repository secrets); the state is reported but never written.
 - `unexpected`: a remote secret exists outside the configured target scope. It is report-only.
 - `missing_value`: the configured `value_env` is not set.
+
+Owner-scope targets (Forgejo `user`) are listed once per source under the synthetic `@owner` repository. Because the API cannot enumerate that store, `create`/`update`/`ok` there are journal-only judgments: `create` means "no recorded apply", `update` means "the local value differs from the recorded fingerprint", and neither says anything about remote state. There is no `unverified_present`, `remote_newer`, or `unexpected` for owner scope.
 
 ## Rotation
 

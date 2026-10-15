@@ -48,7 +48,7 @@ module CredAlignFlow
       pid = read_lock_pid
       raise ConfigError, "no config UI lock at #{lock_path} — is the UI running?" unless pid
 
-      command = `ps -o command= -p #{pid}`.to_s.strip
+      command = IO.popen(["ps", "-o", "command=", "-p", pid.to_s], &:read).to_s.strip
       unless command.include?("itsi") || command.include?("config_ui")
         File.delete(lock_path)
         raise ConfigError,

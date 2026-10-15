@@ -21,6 +21,7 @@ module CredAlignFlow
       raise ConfigError, "secrets must be an array" unless @secrets.is_a?(Array)
 
       validate_ignored_env_names!
+      validate_scaffold_action!
       @sources.each { |id, source| validate_source!(id, source) }
       validate_github_account_auth!
       validate_secrets!
@@ -40,6 +41,12 @@ module CredAlignFlow
 
       ignored = string_list!(@data["ignored_env_names"], "ignored_env_names")
       ignored.each { |name| validate_environment_name!(name, "ignored_env_names entry") }
+    end
+
+    def validate_scaffold_action!
+      return if SCAFFOLD_ACTIONS.include?(scaffold_action)
+
+      raise ConfigError, "scaffold_action must be one of: #{SCAFFOLD_ACTIONS.join(', ')}"
     end
 
     # File roles must refer to different real files: a collision lets an
@@ -137,6 +144,7 @@ module CredAlignFlow
         raise ConfigError, "GitHub source #{id} must use host or url/api_url, not both"
       end
       raise ConfigError, "owner_type is only valid for Forgejo sources" if source.key?("owner_type")
+      raise ConfigError, "user_secrets is only valid for Forgejo sources" if source.key?("user_secrets")
 
       validate_nonempty_string!(source["owner"], "source #{id} owner")
       if source.key?("host")
@@ -151,12 +159,14 @@ module CredAlignFlow
       raise ConfigError, "source #{id} owner must be a string" if source.key?("owner") && !source["owner"].is_a?(String)
 
       owner_type = source.fetch("owner_type", "user")
-      unless %w[user org organization].include?(owner_type)
+      unless FORGEJO_OWNER_TYPES.include?(owner_type)
         raise ConfigError, "Forgejo source #{id} owner_type must be user or organization"
       end
       if %w[org organization].include?(owner_type) && source["owner"].to_s.empty?
         raise ConfigError, "Forgejo organization source #{id} requires an owner"
       end
+
+      boolean!(source.fetch("user_secrets", false), "source #{id} user_secrets")
 
       Providers::Forgejo.new(source, {})
     end
@@ -314,18 +324,45 @@ module CredAlignFlow
         adapter = Providers.adapter_for(provider_type)
         raise ConfigError, "#{context} targets unsupported provider #{provider_type.inspect}" unless adapter
 
-        contexts = if configured_contexts.is_a?(Hash)
-                     configured_contexts.each do |name, enabled|
-                       unless [true, false].include?(enabled)
-                         raise ConfigError, "#{context} target #{provider_type}.#{name} must be boolean"
-                       end
-                     end
-                     configured_contexts.keys
-                   else
-                     string_list!(configured_contexts, "#{context} targets.#{provider_type}")
-                   end
+        contexts = target_context_names(configured_contexts, context, provider_type)
         unknown = contexts.map(&:to_s).uniq - adapter::CONTEXTS
         raise ConfigError, "#{context} has unsupported #{provider_type} contexts: #{unknown.join(', ')}" unless unknown.empty?
+
+        validate_owner_scope_targets!(secret, context, provider_type, adapter,
+                                      enabled_target_names(configured_contexts).map(&:to_s))
+      end
+    end
+
+    def target_context_names(configured, context, provider_type)
+      return string_list!(configured, "#{context} targets.#{provider_type}") unless configured.is_a?(Hash)
+
+      configured.each do |name, enabled|
+        raise ConfigError, "#{context} target #{provider_type}.#{name} must be boolean" unless [true, false].include?(enabled)
+      end
+      configured.keys
+    end
+
+    def enabled_target_names(configured)
+      return Array(configured) unless configured.is_a?(Hash)
+
+      configured.select { |_name, flag| flag }.keys
+    end
+
+    # Owner-scope stores (e.g. Forgejo `user`) are write-only and never
+    # appear in inventory, so targeting them is gated behind each source's
+    # explicit opt-in flag rather than enabled by a target alone.
+    def validate_owner_scope_targets!(secret, context, provider_type, adapter, enabled)
+      owner_contexts = enabled & adapter.owner_scoped_contexts
+      return if owner_contexts.empty?
+
+      @sources.each do |source_id, source|
+        next unless source["type"] == provider_type
+        next unless secret_applies_to_source?(secret, source_id)
+        next if adapter.owner_scope_writable?(source)
+
+        raise ConfigError,
+              "#{context} targets #{provider_type} owner scope #{owner_contexts.join(', ')}, " \
+              "but source #{source_id} does not opt in; set `user_secrets: true` on the source"
       end
     end
 
@@ -368,7 +405,7 @@ module CredAlignFlow
       raise ConfigError, "#{prefix}visibility must be a string" unless value.is_a?(String)
 
       visibility = value.downcase
-      return visibility if %w[public private all].include?(visibility)
+      return visibility if VISIBILITIES.include?(visibility)
 
       raise ConfigError, "#{prefix}visibility must be public, private, or all (got #{value.inspect})"
     end

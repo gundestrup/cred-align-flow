@@ -202,6 +202,58 @@ class ForgejoProviderTest < Minitest::Test
     assert_includes error.message, "pull-only"
   end
 
+  def test_user_scope_cannot_be_listed
+    adapter = build_adapter
+
+    error = assert_raises(CredAlignFlow::ProviderError) do
+      adapter.secrets("example/repo", "user")
+    end
+    assert_includes error.message, "write-only"
+  end
+
+  def test_user_scope_writes_require_the_source_opt_in
+    adapter = build_adapter
+
+    refute adapter.writable?("user")
+    error = assert_raises(CredAlignFlow::ProviderError) do
+      adapter.set_secret("example/repo", "user", "SONAR_TOKEN", "synthetic-test-value")
+    end
+    assert_includes error.message, "user_secrets"
+  end
+
+  def test_user_scope_write_puts_the_secret_to_the_user_endpoint
+    with_http_server([{ body: { "name" => "SONAR_TOKEN" } }], "user_secrets" => true) do |adapter, requests|
+      assert adapter.writable?("user")
+      assert_nil adapter.set_secret("@owner", "user", "SONAR_TOKEN", "synthetic-test-value")
+
+      request = requests.pop
+
+      assert_equal "PUT", request.fetch("method")
+      assert_equal "/api/v1/user/actions/secrets/SONAR_TOKEN", request.fetch("target")
+      assert_equal "token #{TEST_AUTH_TOKEN}", request.fetch("headers").fetch("authorization")
+      assert_equal({ "data" => "synthetic-test-value" }, JSON.parse(request.fetch("body")))
+    end
+  end
+
+  def test_user_scope_write_maps_http_errors_to_provider_errors
+    with_http_server([{ status: 403, body: { "message" => "denied" } }],
+                     "user_secrets" => true) do |adapter, _requests|
+      error = assert_raises(CredAlignFlow::ProviderError) do
+        adapter.set_secret("@owner", "user", "SONAR_TOKEN", "synthetic-test-value")
+      end
+      assert_includes error.message, "HTTP 403"
+    end
+  end
+
+  def test_user_scope_write_rejects_malformed_secret_names
+    with_http_server([], "user_secrets" => true) do |adapter, _requests|
+      error = assert_raises(CredAlignFlow::ProviderError) do
+        adapter.set_secret("@owner", "user", "../bad", "synthetic-test-value")
+      end
+      assert_includes error.message, "invalid Forgejo secret name"
+    end
+  end
+
   private
 
   def build_adapter(overrides = {})
@@ -280,7 +332,9 @@ class ForgejoProviderTest < Minitest::Test
       name, value = line.split(":", 2)
       headers[name.downcase] = value.to_s.strip
     end
+    length = headers["content-length"].to_i
+    body = length.positive? ? socket.read(length) : ""
 
-    { "method" => method, "target" => target, "headers" => headers }
+    { "method" => method, "target" => target, "headers" => headers, "body" => body }
   end
 end

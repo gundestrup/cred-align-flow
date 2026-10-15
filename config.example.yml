@@ -21,11 +21,19 @@ state_file: ~/.local/state/cred-align-flow/inventory.json
 # ignored_env_names:
 #   - LOCAL_HELPER_VAR
 
+# What `scaffold` does with unimported env names when no --target is
+# given: default only lists them in the UI/CLI, import writes them as
+# commented full-field draft entries to uncomment/edit later, auto
+# writes minimal active entries under the token defaults (adjust scope
+# via the UI or by hand).
+# scaffold_action: default
+
 sources:
   github-main:
     type: github
     owner: your-github-owner
     host: github.com
+    # api_url: https://api.github.com  # API endpoint; alternative to host (e.g. GHES)
     auth_env: GITHUB_SYNC_TOKEN
     repositories:
       visibility: public
@@ -41,6 +49,9 @@ sources:
   #   owner_type: user # or organization
   #   url: https://forgejo.example
   #   auth_env: FORGEJO_TOKEN
+  #   # Opt-in blind pushes to account-level user secrets (targets.forgejo:
+  #   # [user]). The API cannot list them — writes are unverifiable.
+  #   # user_secrets: true
   #   repositories:
   #     visibility: public
   #     include_archived: false
@@ -57,13 +68,22 @@ secrets:
     # value_digest: "hmac-sha256:<64 hex chars>"
     version: "2026-10-07"
     version_at: "2026-10-07T00:00:00Z"
+    # updated_at: is an accepted legacy alias of version_at — an entry
+    # must use only one of the two.
     visibility: public
     sources:
       - github-main
-    targets:
+    targets:      # github also supports: agents, codespaces (absent = actions only)
       github:
         - actions
         - dependabot
+    # Remaining scope options (omit to use defaults):
+    # exclude_sources: [source-id]        # hard lock: token never reaches these sources
+    # exclude_repositories:               # flat list, or per-source map (legacy alias: exclude_repos)
+    #   github-main: ["owner/repo"]
+    # repository_rules:                   # per-source owner/repo overrides: include | exclude | default
+    #   github-main:
+    #     "owner/repo": include
 
   - name: SEMGREP_APP_TOKEN
     value_env: SEMGREP_APP_TOKEN_VALUE
@@ -78,6 +98,9 @@ secrets:
         - dependabot
 
   # Pull-only Forgejo examples; uncomment after enabling forgejo-main.
+  # `targets.forgejo` also accepts `user` — account-level secrets pushed
+  # blindly to every source with `user_secrets: true` (push-only, not
+  # enumerable; repository rules and repo exclusions do not apply).
   # - name: DEPLOY_HOST
   #   value_env: DEPLOY_HOST_VALUE
   #   version: "2026-10-07"

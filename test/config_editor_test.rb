@@ -27,6 +27,10 @@ class ConfigEditorTest < Minitest::Test
       %w[actions dependabot]
     end
 
+    def owner_scoped_context?(_context)
+      false
+    end
+
     def validate_context!(context)
       return if contexts.include?(context)
 
@@ -52,6 +56,9 @@ class ConfigEditorTest < Minitest::Test
       assert_equal "github-main", source.fetch("id")
       assert_equal "public", public_repo.fetch("visibility")
       assert_equal "4242", public_repo.fetch("id")
+      assert_equal %w[actions agents codespaces dependabot], view.fetch("provider_contexts").fetch("github")
+      assert_equal({ "github" => %w[actions agents codespaces dependabot] },
+                   view.fetch("builtin_token_presets").fetch("GitHub: all contexts").fetch("targets"))
       assert_equal File.basename(rules_path), view.fetch("rules_file")
       assert_equal({}, view.fetch("rules"))
       assert_empty view.fetch("orphan_rules")
@@ -349,6 +356,137 @@ class ConfigEditorTest < Minitest::Test
         editor.save("revision" => view.fetch("revision"), "rules" => {})
       end
       refute_path_exists rules_path
+    end
+  end
+
+  def test_view_reports_unselected_repositories_as_source_excluded
+    with_editor do |_editor, config_path, env_path, state_path, _rules_path|
+      config = CredAlignFlow::Config.new(config_path)
+      state = CredAlignFlow::State.new(state_path)
+      filtered = TestSupport.repository_metadata(
+        "id" => "9999", "name" => "filtered", "nameWithOwner" => "example/filtered",
+        "selected" => false
+      )
+      TestSupport.seed_source(
+        state, "github-main",
+        repositories: [TestSupport.repository_metadata, filtered],
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "github-main"),
+        remote_secrets: {
+          "example/repo" => { "actions" => { "SAMPLE_TOKEN" => { "updated_at" => "2020-01-01T00:00:00Z" } } }
+        }
+      )
+      state.save!
+      editor = CredAlignFlow::ConfigEditor.new(
+        config_path: config_path, env_path: env_path, state_path: state_path
+      )
+      repository = editor.data.fetch("sources").first.fetch("repositories")
+                         .find { |repo| repo.fetch("name") == "example/filtered" }
+      row = repository.fetch("not_assigned").first
+
+      refute repository.fetch("selected")
+      assert_equal "source", row.fetch("category")
+      assert_equal "source filters exclude this repository", row.fetch("reason")
+      assert_empty repository.fetch("assigned")
+    end
+  end
+
+  def test_view_marks_contexts_the_inventory_does_not_cover
+    with_editor do |_editor, config_path, env_path, state_path, _rules_path|
+      data = YAML.safe_load_file(config_path)
+      data.fetch("secrets").first["targets"] = { "github" => %w[actions dependabot] }
+      File.write(config_path, YAML.dump(data))
+      config = CredAlignFlow::Config.new(config_path)
+      state = CredAlignFlow::State.new(state_path)
+      TestSupport.seed_source(
+        state, "github-main",
+        contexts: ["actions"],
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "github-main"),
+        remote_secrets: {
+          "example/repo" => {
+            "actions" => { "SAMPLE_TOKEN" => { "updated_at" => "2020-01-01T00:00:00Z" } }
+          }
+        }
+      )
+      state.save!
+      editor = CredAlignFlow::ConfigEditor.new(
+        config_path: config_path, env_path: env_path, state_path: state_path
+      )
+      view = editor.data
+      source = view.fetch("sources").first
+      repository = source.fetch("repositories").find { |repo| repo.fetch("name") == "example/repo" }
+      contexts = repository.fetch("assigned").first.fetch("contexts")
+      dependabot = contexts.find { |context| context.fetch("name") == "dependabot" }
+
+      assert_equal ["dependabot"], source.fetch("contexts_not_refreshed")
+      assert_equal "not_refreshed", dependabot.fetch("action")
+      assert_equal "inventory does not cover this context", dependabot.fetch("detail")
+    end
+  end
+
+  def test_view_lists_remote_secrets_outside_the_configured_scope
+    with_editor do |_editor, config_path, env_path, state_path, _rules_path|
+      config = CredAlignFlow::Config.new(config_path)
+      state = CredAlignFlow::State.new(state_path)
+      TestSupport.seed_source(
+        state, "github-main",
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "github-main"),
+        remote_secrets: {
+          "example/repo" => {
+            "actions" => {
+              "SAMPLE_TOKEN" => { "updated_at" => "2020-01-01T00:00:00Z" },
+              "FOREIGN_TOKEN" => { "updated_at" => "2020-01-01T00:00:00Z" }
+            }
+          }
+        }
+      )
+      state.save!
+      editor = CredAlignFlow::ConfigEditor.new(
+        config_path: config_path, env_path: env_path, state_path: state_path
+      )
+      repository = editor.data.fetch("sources").first.fetch("repositories")
+                         .find { |repo| repo.fetch("name") == "example/repo" }
+      unexpected = repository.fetch("unexpected").find { |item| item.fetch("name") == "FOREIGN_TOKEN" }
+
+      assert_equal "actions", unexpected.fetch("context")
+      assert_equal "remote secret is outside the configured target scope", unexpected.fetch("detail")
+    end
+  end
+
+  def test_view_distinguishes_account_scope_from_missing_targets
+    with_editor do |_editor, config_path, env_path, state_path, _rules_path|
+      data = YAML.safe_load_file(config_path)
+      data.fetch("sources")["forgejo-main"] = {
+        "type" => "forgejo", "owner" => "example",
+        "url" => "https://forgejo.example", "user_secrets" => true
+      }
+      data["secrets"] = [
+        data.fetch("secrets").first.merge(
+          "sources" => ["forgejo-main"], "targets" => { "forgejo" => ["user"] }
+        ),
+        { "name" => "OTHER_TOKEN", "value_env" => "OTHER_TOKEN_VALUE",
+          "sources" => ["forgejo-main"], "targets" => { "github" => ["actions"] } }
+      ]
+      File.write(config_path, YAML.dump(data))
+      File.write(env_path, "SAMPLE_TOKEN_VALUE=very-secret-value-should-not-appear\nOTHER_TOKEN_VALUE=other\n")
+      config = CredAlignFlow::Config.new(config_path)
+      state = CredAlignFlow::State.new(state_path)
+      TestSupport.seed_source(
+        state, "forgejo-main",
+        selection: CredAlignFlow::InventoryCheck.selection_fingerprint(config, "forgejo-main")
+      )
+      state.save!
+      editor = CredAlignFlow::ConfigEditor.new(
+        config_path: config_path, env_path: env_path, state_path: state_path
+      )
+      repository = editor.data.fetch("sources").find { |source| source.fetch("id") == "forgejo-main" }
+                         .fetch("repositories").first
+      rows = repository.fetch("not_assigned").to_h { |row| [row.fetch("name"), row] }
+
+      assert_equal "targeted only at the account scope, not repositories",
+                   rows.fetch("SAMPLE_TOKEN").fetch("reason")
+      assert_equal "no target context is enabled for this provider",
+                   rows.fetch("OTHER_TOKEN").fetch("reason")
+      assert_empty repository.fetch("assigned")
     end
   end
 

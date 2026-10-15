@@ -19,13 +19,18 @@ module CredAlignFlow
       File.join("config", "secrets.env")
     ].freeze
     TOP_LEVEL_KEYS = %w[version state_file rules_file env_file check_for_updates update_notice_min_age_days ignored_env_names
-                        sources secrets].freeze
-    SOURCE_KEYS = %w[type owner owner_type host api_url url auth_env repositories].freeze
+                        scaffold_action sources secrets].freeze
+    SOURCE_KEYS = %w[type owner owner_type host api_url url auth_env user_secrets repositories].freeze
     REPOSITORY_KEYS = %w[visibility include_archived include_forks include exclude].freeze
     SECRET_KEYS = %w[
       name value_env value_digest version version_at updated_at visibility sources exclude_sources
       exclude_repositories exclude_repos repository_rules targets
     ].freeze
+    # Valid enumerations — the consistency tests assert the docs, the
+    # scaffold template, and the UI all cover these values.
+    SCAFFOLD_ACTIONS = %w[default import auto].freeze
+    VISIBILITIES = %w[public private all].freeze
+    FORGEJO_OWNER_TYPES = %w[user org organization].freeze
     DIGEST_PATTERN = Fingerprint::PATTERN
     DATE_PATTERN = /\A\d{4}-\d{2}-\d{2}\z/
     DATETIME_PATTERN = /\A\d{4}-\d{2}-\d{2}T/
@@ -106,6 +111,14 @@ module CredAlignFlow
 
     def ignored_env_names
       @data.fetch("ignored_env_names", [])
+    end
+
+    # What `scaffold` does with unimported env names when no --target is
+    # given: "default" only lists them, "import" writes commented draft
+    # entries to the YAML for manual activation, "auto" writes minimal
+    # active entries under the token defaults.
+    def scaffold_action
+      @data.fetch("scaffold_action", "default")
     end
 
     def check_for_updates?

@@ -7,7 +7,14 @@ require "uri"
 module CredAlignFlow
   module Providers
     class GitHub < Provider
-      CONTEXTS = %w[actions dependabot].freeze
+      CONTEXTS = %w[actions agents codespaces dependabot].freeze
+      # Read-only token presets the config UI offers alongside the user's
+      # preset file. They stamp scope fields only — nothing here is ever
+      # persisted — so they are safe to derive from adapter constants.
+      TOKEN_PRESETS = {
+        "GitHub: Actions + Dependabot" => { "targets" => { "github" => %w[actions dependabot] } },
+        "GitHub: all contexts" => { "targets" => { "github" => CONTEXTS } }
+      }.freeze
       MAX_DISCOVERY = 1_000
       MAX_REPOSITORY_SECRETS = 100
       MAX_SECRET_VALUE_BYTES = 48 * 1024

@@ -198,6 +198,64 @@ class CliTest < Minitest::Test
     end
   end
 
+  def test_scaffold_action_auto_imports_and_activates_unmanaged_names
+    with_workspace do |workspace|
+      File.open(workspace.fetch(:config_path), "a") { |file| file.puts "scaffold_action: auto" }
+      stdout, stderr, status = invoke(workspace, "scaffold")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stdout, "under the token defaults"
+
+      config = CredAlignFlow::Config.new(workspace.fetch(:config_path))
+      entry = config.secrets.find { |secret| secret["name"] == "UNMANAGED_TOKEN" }
+
+      refute_nil entry
+      refute entry.key?("visibility")
+      refute entry.key?("sources")
+      refute entry.key?("targets")
+      refute entry.key?("exclude_repositories")
+      refute entry.key?("repository_rules")
+      refute_includes stdout + stderr, "extra-payload"
+    end
+  end
+
+  def test_scaffold_action_import_writes_commented_draft_entries
+    with_workspace do |workspace|
+      File.open(workspace.fetch(:config_path), "a") { |file| file.puts "scaffold_action: import" }
+      stdout, stderr, status = invoke(workspace, "scaffold")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stdout, "commented"
+
+      text = File.read(workspace.fetch(:config_path))
+
+      assert_includes text, "# scaffold-draft: UNMANAGED_TOKEN"
+      assert_includes text, "# - name: \"UNMANAGED_TOKEN\""
+      assert_empty(CredAlignFlow::Config.new(workspace.fetch(:config_path)).secrets.select do |secret|
+        secret["name"] == "UNMANAGED_TOKEN"
+      end)
+
+      # The drafted name is not offered again.
+      stdout, stderr, status = invoke(workspace, "scaffold")
+
+      assert_predicate status, :success?, stderr
+      assert_includes stdout, "No unmanaged env-file variables"
+    end
+  end
+
+  def test_scaffold_action_auto_keeps_only_without_target_active
+    with_workspace do |workspace|
+      File.open(workspace.fetch(:config_path), "a") { |file| file.puts "scaffold_action: auto" }
+      _stdout, stderr, status = invoke(workspace, "scaffold", extra_args: ["--only", "UNMANAGED_TOKEN"])
+
+      assert_predicate status, :success?, stderr
+      assert_equal(
+        "UNMANAGED_TOKEN",
+        CredAlignFlow::Config.new(workspace.fetch(:config_path)).secrets.last["name"]
+      )
+    end
+  end
+
   def test_scaffold_syncs_digests_after_value_rotation
     with_workspace do |workspace|
       _stdout, stderr, status = invoke(workspace, "scaffold")

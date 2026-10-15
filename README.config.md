@@ -50,12 +50,22 @@ update_notice_min_age_days: 7
 state_file: ~/.local/state/cred-align-flow/inventory.json
 # rules_file: cred-align.rules.json
 # env_file: secrets.env
+# env names that scaffold should never offer to import:
+# ignored_env_names:
+#   - LOCAL_HELPER_VAR
+# What `scaffold` does with unimported env names when no --target is
+# given: default lists them only, import writes commented full-field
+# draft entries, auto writes minimal active entries under the token
+# defaults (scope fields are managed via the UI or by hand). Explicit
+# --target tuples always win.
+# scaffold_action: default
 
 sources:
   github-main:
     type: github
     owner: your-github-owner
     host: github.com
+    # api_url: https://api.github.com  # API endpoint; alternative to host (e.g. GHES)
     auth_env: GITHUB_SYNC_TOKEN
     repositories:
       visibility: public
@@ -70,6 +80,10 @@ sources:
     owner_type: user # or organization
     url: https://forgejo.example
     auth_env: FORGEJO_TOKEN
+    # Opt-in: allow blind pushes to the account-level user secret store
+    # (targets.forgejo: [user]). The API cannot list user secrets, so
+    # writes are unverifiable and there is no delete.
+    # user_secrets: true
     repositories:
       visibility: public
       include_archived: false
@@ -108,12 +122,12 @@ Secret selection supports:
 - `exclude_sources`: source names to skip
 - `exclude_repositories`: a flat list or a mapping by source name
 - `repository_rules`: exact per-source `owner/repository` overrides with `include`, `exclude`, or `default`; `include`/`exclude` override the token's default source/visibility scope for that repository, but `exclude_sources` always wins. `default` restores the normal scope and can cancel a `exclude_repositories` match.
-- `targets.github`: `actions`, `dependabot`, or both
-- `targets.forgejo`: `actions` only; Forgejo is currently pull-only
+- `targets.github`: any subset of `actions`, `agents`, `codespaces`, `dependabot`; defaults to `actions` when unset. `agents` is the Copilot cloud agent store and needs a recent `gh`; it does not exist on GHES.
+- `targets.forgejo`: `actions` (repository secrets; pull-only) and `user` (account-level secrets shared across the token owner's repositories). `user` is push-only: the Forgejo API cannot list user secrets, so the plan decides from the applied journal alone and writes blindly — enable it per source with `user_secrets: true`. There is no user-scope delete.
 - `value_env`: environment variable containing the value; defaults to the secret name
 - `value_digest`: optional `hmac-sha256:<hex>` keyed fingerprint of `HMAC-SHA256(key, "cred-align-flow\0" + name + "\0" + value)`; the private `.digest-key` file is created next to the env file and is gitignored. Back it up securely with that env file. If it is missing while keyed digests exist, the CLI stops instead of silently generating a replacement. Replacing a key intentionally makes prior fingerprints incomparable and can schedule updates for every applied target; do not rotate it casually. Legacy `sha256:<hex>` digests remain readable. `doctor` reports value drift and `plan` schedules an `update` from the per-target applied fingerprint; `scaffold` can record the current local digest without changing the applied baseline. `scaffold` never prints or stores the value itself.
 - `version`: desired local revision label; change it when rotating a value
-- `version_at`: UTC timestamp for that revision; a newer remote timestamp blocks overwrite unless `--force` is used
+- `version_at`: UTC timestamp for that revision; a newer remote timestamp blocks overwrite unless `--force` is used. `updated_at` is an accepted alias — an entry must use only one of the two.
 
 GitHub repository secrets are limited to 48 KB and 100 secrets per repository. The plan/apply preflight enforces the value-size and known secret-count limits; a count that changed remotely after refresh is rechecked before creation.
 

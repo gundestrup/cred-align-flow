@@ -424,8 +424,9 @@ module CredAlignFlow
 
       candidates = scaffolder.candidates(env_values, config)
       eligible = candidates - ignored_names
-      names, target_scope = resolve_scaffold_selection(
-        scaffolder, config, eligible, only, targets, digests_only: options[:digests_only]
+      names, target_scope, mode = resolve_scaffold_selection(
+        scaffolder, config, eligible, only, targets,
+        digests_only: options[:digests_only], action: config.scaffold_action
       )
 
       ignored = scaffolder.ignore!(ignored_names)
@@ -439,12 +440,11 @@ module CredAlignFlow
         unknown = names - pending
         raise ConfigError, "env names ceased to be eligible for import: #{unknown.join(', ')}" unless unknown.empty?
 
-        puts "Will add #{names.length} active secret entr#{names.length == 1 ? 'y' : 'ies'} for exact targets:"
-        target_scope.each { |source, context, repository| puts "  #{source} #{context} #{repository}" }
+        announce_scaffold(mode, names, target_scope)
       end
 
-      result = scaffolder.apply!(names, config, env_values, targets: target_scope)
-      report_scaffold_result(result, config, ignored, eligible)
+      result = scaffolder.apply!(names, config, env_values, targets: target_scope, mode: mode)
+      report_scaffold_result(result, config, ignored, eligible, mode)
     end
 
     def validate_scaffold_options!(options, only, targets)
@@ -453,27 +453,50 @@ module CredAlignFlow
       raise ConfigError, "--digests-only cannot be combined with --only or --target"
     end
 
-    def resolve_scaffold_selection(scaffolder, config, eligible, only, targets, digests_only:)
+    # scaffold_action decides what imports without --target do:
+    # "default" keeps the list-only behaviour, "import" writes commented
+    # draft entries, "auto" writes minimal active entries under the
+    # token defaults. Explicit --target tuples always produce active
+    # entries.
+    def resolve_scaffold_selection(scaffolder, config, eligible, only, targets, digests_only:, action:)
       if only.nil?
-        if targets.empty?
-          unless digests_only || eligible.empty?
-            puts "Unimported env names: #{eligible.join(', ')}"
-            puts "No active entries were added. Use --only NAMES and repeat --target 'SOURCE|CONTEXT|OWNER/REPO' per destination."
-          end
-          return [[], []]
-        end
+        raise ConfigError, "--target requires --only so imported env names are explicit" unless targets.empty?
 
-        raise ConfigError, "--target requires --only so imported env names are explicit"
+        unless digests_only || eligible.empty?
+          return [eligible, [], action.to_sym] if action != "default"
+
+          puts "Unimported env names: #{eligible.join(', ')}"
+          puts "No active entries were added. Use --only NAMES and repeat --target 'SOURCE|CONTEXT|OWNER/REPO' per destination."
+        end
+        return [[], [], :none]
       end
       raise ConfigError, "--only requires at least one env name" if only.empty?
 
       unknown = only - eligible
       raise ConfigError, "env names are not eligible for import: #{unknown.join(', ')}" unless unknown.empty?
 
-      [only, scaffolder.validate_targets(config, targets)]
+      return [only, scaffolder.validate_targets(config, targets), :targeted] unless targets.empty?
+      raise ConfigError, "scaffold imports require at least one explicit --target" if action == "default"
+
+      [only, [], action.to_sym]
     end
 
-    def report_scaffold_result(result, config, ignored, eligible)
+    def announce_scaffold(mode, names, target_scope)
+      case mode
+      when :import
+        puts "Will add #{names.length} commented scaffold draft entr#{names.length == 1 ? 'y' : 'ies'} " \
+             "(uncomment each entry to activate it):"
+      when :auto
+        puts "Will add #{names.length} minimal active secret entr#{names.length == 1 ? 'y' : 'ies'} " \
+             "under the token defaults:"
+      else
+        puts "Will add #{names.length} active secret entr#{names.length == 1 ? 'y' : 'ies'} for exact targets:"
+        target_scope.each { |source, context, repository| puts "  #{source} #{context} #{repository}" }
+      end
+      names.each { |name| puts "  #{name}" }
+    end
+
+    def report_scaffold_result(result, config, ignored, eligible, mode)
       added = result["added"]
       digests = result["digests"]
       skipped = result["skipped_digests"]
@@ -483,9 +506,17 @@ module CredAlignFlow
       end
 
       unless added.empty?
-        puts "Scaffolded #{added.length} active secret entr#{added.length == 1 ? 'y' : 'ies'} into #{config.path}:"
-        added.each { |name| puts "  #{name}" }
-        puts "Entries are active only for the exact targets listed above."
+        count = "#{added.length} secret entr#{added.length == 1 ? 'y' : 'ies'}"
+        case mode
+        when :import
+          puts "Scaffolded #{count} as commented drafts into #{config.path}:"
+          puts "Entries stay inactive until each draft block is uncommented."
+        when :auto
+          puts "Scaffolded #{count} into #{config.path} under the token defaults."
+        else
+          puts "Scaffolded #{count} active into #{config.path}."
+          puts "Entries are active only for the exact targets listed above."
+        end
       end
       unless digests.empty?
         puts "Updated value digests for #{digests.length} secret#{'s' unless digests.length == 1}:"
@@ -547,7 +578,9 @@ module CredAlignFlow
 
       provider = Providers.build(config.source(source_id), env_values)
       line = "#{source_id}: #{provider.cli_version || 'provider CLI unavailable'}"
-      line += " (pull-only)" unless provider.writable?
+      unless provider.writable?
+        line += provider.owner_scope_writable? ? " (pull-only for repositories; owner-scope writes enabled)" : " (pull-only)"
+      end
       puts line
       problems = 0
       if verify
@@ -673,6 +706,11 @@ module CredAlignFlow
           --target TARGET   Exact SOURCE|CONTEXT|OWNER/REPO tuple; repeat per target
           --ignore NAMES    Add env names to ignored_env_names and skip them
           --digests-only    Refresh value digests without importing new names
+
+        Without --target, the config's scaffold_action decides what an
+        import does: "default" lists unimported names only, "import"
+        writes commented full-field draft entries, "auto" writes
+        minimal active entries under the token defaults.
 
         Default files:
           Config: cred-align.local.yml, config/cred-align.local.yml, config/config.yml,

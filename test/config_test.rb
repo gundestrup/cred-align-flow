@@ -39,6 +39,87 @@ class ConfigTest < Minitest::Test
     end
   end
 
+  def test_scaffold_action_accepts_known_modes_and_defaults_to_default
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      base = {
+        "version" => 1,
+        "sources" => { "github-main" => { "type" => "github", "owner" => "example" } },
+        "secrets" => []
+      }
+      File.write(path, YAML.dump(base))
+
+      assert_equal "default", CredAlignFlow::Config.new(path).scaffold_action
+
+      %w[import auto default].each do |action|
+        File.write(path, YAML.dump(base.merge("scaffold_action" => action)))
+
+        assert_equal action, CredAlignFlow::Config.new(path).scaffold_action
+      end
+
+      File.write(path, YAML.dump(base.merge("scaffold_action" => "everything")))
+      error = assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+
+      assert_includes error.message, "scaffold_action"
+
+      File.write(path, YAML.dump(base.merge("scaffold_action" => true)))
+
+      assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+    end
+  end
+
+  def test_forgejo_user_target_requires_the_source_opt_in
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      data = {
+        "version" => 1,
+        "sources" => {
+          "forgejo-main" => {
+            "type" => "forgejo", "owner" => "example", "url" => "https://forgejo.example"
+          },
+          "forgejo-alt" => {
+            "type" => "forgejo", "owner" => "other", "url" => "https://forgejo2.example"
+          }
+        },
+        "secrets" => [{
+          "name" => "SONAR_TOKEN",
+          "sources" => ["forgejo-main"],
+          "targets" => { "forgejo" => %w[actions user] }
+        }]
+      }
+
+      File.write(path, YAML.dump(data))
+      error = assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+      assert_includes error.message, "user_secrets"
+
+      # The opt-in is per source: another Forgejo source without it is
+      # unaffected because the secret does not apply to it.
+      data["sources"]["forgejo-main"]["user_secrets"] = true
+      File.write(path, YAML.dump(data))
+      config = CredAlignFlow::Config.new(path)
+
+      assert_equal %w[actions user], config.contexts_for(config.secrets.first, "forgejo-main")
+    end
+  end
+
+  def test_user_secrets_flag_is_forgejo_only
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      File.write(path, YAML.dump(
+                         "version" => 1,
+                         "sources" => {
+                           "github-main" => {
+                             "type" => "github", "owner" => "example", "user_secrets" => true
+                           }
+                         },
+                         "secrets" => []
+                       ))
+
+      error = assert_raises(CredAlignFlow::ConfigError) { CredAlignFlow::Config.new(path) }
+      assert_includes error.message, "user_secrets is only valid for Forgejo"
+    end
+  end
+
   def test_update_notice_settings_default_and_validate
     Dir.mktmpdir do |dir|
       path = File.join(dir, "config.yml")

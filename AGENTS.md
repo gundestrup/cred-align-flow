@@ -2,7 +2,7 @@
 
 ## Project scope
 
-`cred-align-flow` is a provider-agnostic CLI for synchronizing CI secrets and repository variables, with inventory and metadata-based drift detection. The current providers are GitHub Actions/Dependabot secrets through `gh` and pull-only Forgejo Actions secrets through the Forgejo API.
+`cred-align-flow` is a provider-agnostic CLI for synchronizing CI secrets and repository variables, with inventory and metadata-based drift detection. The current providers are GitHub Actions/Dependabot secrets through `gh` and Forgejo Actions secrets through the Forgejo API — pull-only at repository level, plus opt-in push-only user-scope secrets (`user_secrets: true`; the API cannot list them, so those writes are blind and there is no delete).
 
 ## Security rules
 

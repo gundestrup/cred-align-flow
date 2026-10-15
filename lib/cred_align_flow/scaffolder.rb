@@ -47,6 +47,9 @@ module CredAlignFlow
       unless adapter::CONTEXTS.include?(context)
         raise ConfigError, "#{context.inspect} is not a supported context for #{source_id}"
       end
+      if adapter.owner_scoped_context?(context)
+        raise ConfigError, "#{context.inspect} targets the account scope for #{source_id}; --target names repositories"
+      end
       unless Rules.valid_repository_name?(repository)
         raise ConfigError, "scaffold repository targets must be exact owner/name pairs"
       end
@@ -83,35 +86,134 @@ module CredAlignFlow
       @at = at
     end
 
-    def render(name, indent)
+    # :import renders the entry as a draft block: every entry line is
+    # prefixed with "# " so removing that marker activates it, while the
+    # draft marker itself stays a comment. Optional fields are emitted as
+    # comment lines, so inside a draft they carry "# #" and stay inactive
+    # even after the entry is uncommented. :auto writes the minimal
+    # entry — identity fields only — so scope is decided by token
+    # defaults and the UI's token_defaults/rules layers. :targeted and
+    # :import write the full field set: every scope option is present for
+    # the user to uncomment, delete, or change, with adapter-supported
+    # contexts enumerated per provider type.
+    def render(name, indent, mode: :targeted)
       pad = " " * indent
       remote_name = name.upcase
       value = @config.value_for({ "name" => name, "value_env" => name }, @env_values)
+      commented = mode == :import
+      minimal = mode == :auto
+      marker = commented ? Scaffolder::DRAFT_MARKER : Scaffolder::MARKER
+      note =
+        if commented
+          "imported draft; uncomment \"# \" lines to activate (\"# #\" lines are optional)"
+        elsif minimal
+          "imported and activated under the token defaults"
+        else
+          "imported from the env file"
+        end
       lines = [
         "",
-        "#{pad}#{Scaffolder::MARKER} #{name} - imported from the env file",
+        "#{pad}#{marker} #{name} - #{note}",
         "#{pad}- name: #{quote(remote_name)}",
         "#{pad}  value_env: #{quote(name)}",
         ("#{pad}  value_digest: #{quote(Fingerprint.digest(remote_name, value))}" if value),
         "#{pad}  version: #{quote(@at.strftime('%Y-%m-%d'))}",
-        "#{pad}  version_at: #{quote(@at.strftime('%Y-%m-%dT%H:%M:%SZ'))}",
-        "#{pad}  visibility: all"
+        "#{pad}  version_at: #{quote(@at.strftime('%Y-%m-%dT%H:%M:%SZ'))}"
       ].compact
-      (lines + destination_lines(pad)).join("\n") << "\n"
+      unless minimal
+        lines << "#{pad}  visibility: all  # public | private | all"
+        lines.concat(scope_lines(pad))
+        lines.concat(optional_lines(pad))
+      end
+      lines = comment_entry(lines) if commented
+      lines.join("\n") << "\n"
     end
 
     private
 
-    def destination_lines(pad)
-      [
-        "#{pad}  sources: [#{@scope.fetch(:sources).map { |id| quote(id) }.join(', ')}]",
-        "#{pad}  exclude_repositories:",
-        *exclusions(pad),
-        "#{pad}  repository_rules:",
-        *repository_rules(pad),
-        "#{pad}  targets:",
-        *targets(pad)
-      ]
+    def comment_entry(lines)
+      lines.map do |line|
+        next line if line.empty? || line.strip.start_with?(Scaffolder::DRAFT_MARKER)
+
+        line.sub(/\A\s*/) { |indent| "#{indent}# " }
+      end
+    end
+
+    def scope_lines(pad)
+      lines = ["#{pad}  sources: [#{@scope.fetch(:sources).map { |id| quote(id) }.join(', ')}]"]
+      extra = configured_sources - @scope.fetch(:sources)
+      lines << "#{pad}  # other configured sources: #{extra.map { |id| quote(id) }.join(', ')}" unless extra.empty?
+      lines << "#{pad}  #{@scope.fetch(:targets).any? ? 'targets:' : '# targets:'}"
+      lines.concat(target_lines(pad))
+      return lines unless @scope.fetch(:repositories).any?
+
+      lines << "#{pad}  exclude_repositories:"
+      lines.concat(exclusions(pad))
+      lines << "#{pad}  repository_rules:"
+      lines.concat(repository_rules(pad))
+      lines
+    end
+
+    # Every provider type used by the configured sources is listed; types
+    # outside the scope are rendered as comments so adding them back is a
+    # matter of uncommenting. Selected contexts are plain list items,
+    # unselected ones are commented items — the adapter's CONTEXTS and
+    # OWNER_CONTEXTS drive both, keeping the scaffold in sync with the
+    # provider model.
+    def target_lines(pad)
+      provider_types.filter_map do |type|
+        adapter = Providers.adapter_for(type)
+        next unless adapter
+
+        selected = @scope.fetch(:targets).fetch(type, nil)
+        if selected
+          ["#{pad}    #{quote(type)}:", *context_items(pad, adapter, selected)]
+        else
+          ["#{pad}    # #{quote(type)}:", *adapter::CONTEXTS.map do |context|
+            "#{pad}    #   - #{quote(context)}#{context_note(adapter, context)}"
+          end]
+        end
+      end.flatten(1)
+    end
+
+    def context_items(pad, adapter, selected)
+      adapter::CONTEXTS.map do |context|
+        item = "#{pad}      #{selected.include?(context) ? '- ' : '# - '}#{quote(context)}"
+        item + context_note(adapter, context)
+      end
+    end
+
+    def context_note(adapter, context)
+      return "" unless adapter.owner_scoped_context?(context)
+
+      "  # account scope; needs user_secrets: true on the source"
+    end
+
+    # Scope fields that are always optional: exclude_sources, plus
+    # exclude_repositories/repository_rules templates when the scope
+    # carries no repository narrowing to mirror.
+    def optional_lines(pad)
+      lines = ["#{pad}  # exclude_sources: []  # hard lock: never manage this token on these sources"]
+      return lines if @scope.fetch(:repositories).any?
+
+      lines << "#{pad}  # exclude_repositories:"
+      @scope.fetch(:sources).each do |source_id|
+        lines << "#{pad}  #   #{quote(source_id)}: [\"owner/repo\"]"
+      end
+      lines << "#{pad}  # repository_rules:"
+      @scope.fetch(:sources).each do |source_id|
+        lines << "#{pad}  #   #{quote(source_id)}:"
+        lines << "#{pad}  #     \"owner/repo\": include  # include | exclude | default"
+      end
+      lines
+    end
+
+    def provider_types
+      @config.source_ids.map { |id| @config.source(id).fetch("type") }.uniq.sort
+    end
+
+    def configured_sources
+      @config.source_ids.sort
     end
 
     def exclusions(pad)
@@ -121,13 +223,6 @@ module CredAlignFlow
     def repository_rules(pad)
       @scope.fetch(:repositories).flat_map do |source_id, repositories|
         ["#{pad}    #{quote(source_id)}:", *repositories.map { |repository| "#{pad}      #{quote(repository)}: include" }]
-      end
-    end
-
-    def targets(pad)
-      @scope.fetch(:targets).map do |provider_type, contexts|
-        context_values = contexts.map { |context| quote(context) }.join(", ")
-        "#{pad}    #{quote(provider_type)}: [#{context_values}]"
       end
     end
 
@@ -151,6 +246,10 @@ module CredAlignFlow
   #     can never corrupt the structure.
   class Scaffolder
     MARKER = "# scaffold:"
+    # Draft marker for commented-out imports (`scaffold_action: import`).
+    # Distinct from MARKER so a leftover draft marker can suppress
+    # re-import without making an ordinary scaffold comment do the same.
+    DRAFT_MARKER = "# scaffold-draft:"
 
     def initialize(config_path)
       @config_path = File.expand_path(config_path)
@@ -174,11 +273,15 @@ module CredAlignFlow
     # `digests` are secrets whose recorded value_digest was brought in line
     # with the current env value; `skipped_digests` names secrets whose
     # digest could not be located in an editable format.
-    def apply!(names, config, env_values, targets: [], at: Time.now.utc)
+    # `mode` selects how --target-less imports render: :import writes
+    # commented drafts the user uncomments to activate; :auto writes
+    # minimal active entries under the token defaults. Explicit targets
+    # always produce active targeted entries regardless of mode.
+    def apply!(names, config, env_values, targets: [], mode: :targeted, at: Time.now.utc)
       validate_config_path!(config)
       AtomicFile.with_lock(@config_path) do
         @text = File.read(@config_path)
-        apply_locked(names, Config.new(@config_path), env_values, targets, at)
+        apply_locked(names, Config.new(@config_path), env_values, targets, at, mode)
       end
     end
 
@@ -219,12 +322,12 @@ module CredAlignFlow
 
     private
 
-    def apply_locked(names, config, env_values, targets, at)
+    def apply_locked(names, config, env_values, targets, at, mode)
       names = names.uniq
       unknown = names - candidate_names(env_values, config)
       raise ConfigError, "env names are no longer eligible for import: #{unknown.join(', ')}" unless unknown.empty?
 
-      scope = scope_for(config, targets) unless names.empty?
+      scope = names.empty? ? nil : scope_for_mode(config, targets, mode)
       lines = @text.lines
       digest_sync = sync_digests(lines, config, env_values)
       if names.empty?
@@ -237,9 +340,11 @@ module CredAlignFlow
       insertion = secrets_insertion(lines)
       indent = insertion[:index] ? list_item_indent(lines, insertion[:index]) : 2
       entry_builder = ScaffoldEntry.new(config, env_values, scope, at)
-      blocks = names.map { |name| entry_builder.render(name, indent) }
+      blocks = names.map { |name| entry_builder.render(name, indent, mode: mode) }
       new_text = inserted_text(lines, insertion, blocks)
-      replace_text!(new_text, names)
+      # Commented drafts are not real secret entries, so the generated
+      # document cannot assert their names.
+      replace_text!(new_text, mode == :import ? [] : names)
       { "added" => names }.merge(digest_sync)
     end
 
@@ -273,13 +378,45 @@ module CredAlignFlow
     def candidate_names(env_values, config)
       referenced = referenced_names(config)
       ignored = config.ignored_env_names
+      drafts = draft_names
       env_values.keys.reject do |name|
-        referenced.include?(name) || ignored.include?(name) || name.end_with?("_FILE")
+        referenced.include?(name) || ignored.include?(name) || name.end_with?("_FILE") || drafts.include?(name)
+      end
+    end
+
+    # Env names already imported as commented draft blocks. Only the
+    # draft marker counts — a stale "# scaffold:" comment from a removed
+    # real entry must not hide the name.
+    def draft_names
+      @text.lines.filter_map do |line|
+        stripped = line.strip
+        next unless stripped.start_with?(DRAFT_MARKER)
+
+        stripped.delete_prefix(DRAFT_MARKER).strip.split(/\s/).first
       end
     end
 
     def scope_for(config, targets)
       ScaffoldTargetScope.new(config, targets).resolve
+    end
+
+    def scope_for_mode(config, targets, mode)
+      return scope_for(config, targets) if mode == :targeted || targets.any?
+
+      default_scope(config)
+    end
+
+    # The scope for imports that do not name --target tuples: every
+    # configured source with each provider type's default
+    # repository-scoped context — owner/account contexts are never
+    # selected automatically, and no repository narrowing is generated.
+    def default_scope(config)
+      types = config.source_ids.map { |id| config.source(id).fetch("type") }.uniq.sort
+      targets = types.each_with_object({}) do |type, map|
+        context = Providers.adapter_for(type)&.default_context
+        map[type] = [context] if context
+      end
+      { sources: config.source_ids.sort, targets: targets, repositories: {}, tuples: [] }
     end
 
     def referenced_names(config)

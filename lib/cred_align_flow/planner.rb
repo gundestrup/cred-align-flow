@@ -65,6 +65,7 @@ module CredAlignFlow
 
             value_available = !@config.value_for(secret, @env_values).nil?
             @config.contexts_for(secret, source_id).each do |context|
+              next if owner_scoped?(source_id, context)
               next unless Selector.matches_filter?(@context_filter, context)
 
               expected_names[[source_id, repo_name, context]] << secret.fetch("name")
@@ -73,6 +74,7 @@ module CredAlignFlow
           end
         end
 
+        plan_owner_scope(source_id)
         add_unexpected_items(source_id, expected_names) if @secret_filter.nil? && @context_filter.nil?
       end
 
@@ -112,7 +114,7 @@ module CredAlignFlow
         return item(source_id, repo_name, context, name, "missing_value",
                     "#{@config.value_ref(secret)} is not set")
       end
-      unless provider_writable?(source_id)
+      unless provider_writable?(source_id, context)
         return item(source_id, repo_name, context, name, "pull_only",
                     "provider is pull-only; remote writes are not possible")
       end
@@ -201,9 +203,72 @@ module CredAlignFlow
       managed["source_identity"] == @config.source_key(source_id)
     end
 
-    def provider_writable?(source_id)
+    # Owner-scope stores cannot be listed, so items for them are emitted
+    # once per source under the synthetic OWNER_SCOPE_REPOSITORY key and
+    # decided against the applied journal alone — remote existence,
+    # timestamps, and drift are unknowable by design.
+    def plan_owner_scope(source_id)
+      # --repo narrows intent to repository targets; an account-scope
+      # write affects every repository, so it is excluded then.
+      return if @repo_filter
+
+      @config.secrets.each do |secret|
+        next unless secret_selected?(secret)
+        next unless @config.secret_applies_to_source?(secret, source_id)
+
+        @config.contexts_for(secret, source_id).each do |context|
+          next unless Selector.matches_filter?(@context_filter, context)
+          next unless owner_scoped?(source_id, context)
+
+          @items << owner_item_for(source_id, context, secret)
+        end
+      end
+    end
+
+    def owner_item_for(source_id, context, secret)
+      name = secret.fetch("name")
+      repo = Provider::OWNER_SCOPE_REPOSITORY
+      unless @config.value_for(secret, @env_values)
+        return item(source_id, repo, context, name, "missing_value", "#{@config.value_ref(secret)} is not set")
+      end
+      unless @state.source_identity(source_id)
+        return item(source_id, repo, context, name, "not_checked",
+                    "no inventory snapshot for this source; refresh first")
+      end
+      unless provider_writable?(source_id, context)
+        return item(source_id, repo, context, name, "pull_only",
+                    "owner-scope writes are not enabled for this source")
+      end
+
+      managed = @state.applied_record(source_id, repo, context, name)
+      unless managed && applied_identity_current?(managed, repo, source_id)
+        return item(source_id, repo, context, name, "create",
+                    "owner-scope secrets cannot be listed; the write creates or overwrites blindly")
+      end
+
+      applied = managed["fingerprint"]
+      desired = @config.desired_fingerprint(secret, @env_values)
+      if applied && applied == desired
+        return item(source_id, repo, context, name, "ok",
+                    "applied fingerprint matches the desired value; remote state is not enumerable")
+      end
+
+      item(source_id, repo, context, name, "update",
+           "desired value differs from the recorded apply; remote state is not enumerable")
+    end
+
+    def owner_scoped?(source_id, context)
       adapter = Providers.adapter_for(@config.source(source_id)["type"])
-      adapter.nil? || adapter::WRITABLE
+      adapter&.owner_scoped_context?(context)
+    end
+
+    def provider_writable?(source_id, context)
+      source = @config.source(source_id)
+      adapter = Providers.adapter_for(source["type"])
+      return true if adapter.nil?
+      return adapter.owner_scope_writable?(source) if adapter.owner_scoped_context?(context)
+
+      adapter::WRITABLE
     end
 
     def add_unexpected_items(source_id, expected_names)

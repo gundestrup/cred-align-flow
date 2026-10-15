@@ -121,7 +121,7 @@ module CredAlignFlow
     def validate_token_preset!(name, fields)
       Rules.validate_scope_fields!(fields, "#{basename} preset #{name.inspect}")
       visibility = fields["visibility"]
-      return if visibility.nil? || %w[public private all].include?(visibility.downcase)
+      return if visibility.nil? || Config::VISIBILITIES.include?(visibility.downcase)
 
       raise ConfigError,
             "#{basename} preset #{name.inspect} visibility must be public, private, or all"

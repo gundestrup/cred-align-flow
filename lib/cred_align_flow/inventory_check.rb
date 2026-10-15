@@ -29,7 +29,12 @@ module CredAlignFlow
     end
 
     def missing_contexts(config, state, source_id)
-      needed = config.contexts_for_source(source_id)
+      # Owner-scope contexts are write-only and never pulled, so they can
+      # never be missing from a refresh — only enumerable contexts count.
+      type = config.source(source_id)["type"]
+      needed = config.contexts_for_source(source_id).reject do |context|
+        Providers.owner_scoped_context?(type, context)
+      end
       node = state.data.dig("sources", source_id)
       return needed unless node
 
