@@ -1,10 +1,11 @@
-# Semgrep CE configuration — local rules only (community-edition safe)
+# Semgrep configuration — local rules only
 #
-# Run: semgrep scan --config .semgrep.yml --oss-only --metrics off --error lib/ bin/ Rakefile
+# Run: semgrep scan --config .semgrep.yml --metrics off --error lib/ bin/ Rakefile
 #
-# No registry packs (p/*) — they bundle Pro rules that require a paid
-# license on private repositories. Rules live in this file; nothing is
-# uploaded or fetched at scan time. See engineering-memory/tools/semgrep.md.
+# No registry packs (p/*): this repo is public so Pro rules would be
+# licensed, but fetching them needs a SEMGREP_APP_TOKEN and makes the
+# scan network-dependent. Rules live in this file; nothing is uploaded
+# or fetched at scan time. See engineering-memory/tools/semgrep.md.
 
 rules:
   # Detect String#scan with unanchored polynomial regex (ReDoS).

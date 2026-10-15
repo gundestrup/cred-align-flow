@@ -43,10 +43,11 @@ end
 desc "Run Semgrep security scan (skipped when semgrep is not installed, unless SEMGREP_REQUIRED=1)"
 task :semgrep do
   if system("command -v semgrep > /dev/null")
-    # CE/OSS only: repo-local rules in .semgrep.yml, no registry packs
-    # (p/* bundles Pro rules — not licensed for private repos), no
-    # login, no upload, no metrics.
-    sh "semgrep scan --config .semgrep.yml --oss-only --metrics off " \
+    # Repo-local rules in .semgrep.yml only: no registry packs, so no
+    # login, network fetch, upload, or metrics. This is a public repo,
+    # so Semgrep Pro/registry rules would be licensed — adopting them
+    # needs a SEMGREP_APP_TOKEN and makes the scan network-dependent.
+    sh "semgrep scan --config .semgrep.yml --metrics off " \
        "--disable-version-check --error --quiet lib/ bin/ Rakefile"
   elsif ENV["SEMGREP_REQUIRED"] == "1"
     abort "semgrep is required (SEMGREP_REQUIRED=1) but not installed"
