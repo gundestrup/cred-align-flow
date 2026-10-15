@@ -1,0 +1,9 @@
+# Local secrets and generated state must never be scanned — whatever the
+# scan target is. config/ is gitignored and holds env values, rules, and
+# inventory; the rest are value/key files wherever they may live.
+config/
+coverage/
+**/.env
+**/.env.*
+**/secrets.env
+**/.digest-key

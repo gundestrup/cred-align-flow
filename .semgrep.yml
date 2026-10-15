@@ -5,7 +5,9 @@
 # No registry packs (p/*): this repo is public so Pro rules would be
 # licensed, but fetching them needs a SEMGREP_APP_TOKEN and makes the
 # scan network-dependent. Rules live in this file; nothing is uploaded
-# or fetched at scan time. See engineering-memory/tools/semgrep.md.
+# or fetched at scan time. `.semgrepignore` keeps the gitignored config/
+# secrets dir and env/key files out of every scan target.
+# See engineering-memory/tools/semgrep.md.
 
 rules:
   # Detect String#scan with unanchored polynomial regex (ReDoS).
