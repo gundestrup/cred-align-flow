@@ -4,7 +4,8 @@
       "Exec(NODE_REQUIRED=1 bundle exec)",
       "Exec(SEMGREP_REQUIRED=1 NODE_REQUIRED=1 bundle exec)",
       "Exec(git)",
-      "Exec(RAILS_ENV=test bundle exec)"
+      "Exec(RAILS_ENV=test bundle exec)",
+      "Exec(sed)"
     ]
   }
 }

@@ -21,13 +21,36 @@ class ConfigServerTest < Minitest::Test
   def test_local_ui_uses_csrf_protection_and_never_serves_values
     with_rack_app do |app, config_path|
       page_status, page_headers, page_body = call(app, "GET", "/")
-      token = page_body.join.match(/window\.CRED_ALIGN_CSRF = "([a-f0-9]+)"/)&.captures&.first
+      token = page_body.join.match(/name="cred-align-csrf" content="([a-f0-9]+)"/)&.captures&.first
       data_status, _data_headers, data_body = call(app, "GET", "/api/data")
       data = JSON.parse(data_body.join)
 
       assert_equal 200, page_status
       assert_equal "text/html; charset=utf-8", page_headers.fetch("Content-Type")
+      csp = page_headers.fetch("Content-Security-Policy")
+
+      assert_includes csp, "default-src 'none'"
+      assert_includes csp, "script-src 'self'"
+      assert_includes csp, "style-src 'self'"
+      refute_includes csp, "nonce"
       assert_includes page_body.join, "Cancel changes"
+      assert_includes page_body.join, 'src="/ui.js"'
+      assert_includes page_body.join, 'href="/ui.css"'
+
+      css_status, css_headers, css_body = call(app, "GET", "/ui.css")
+      js_status, js_headers, js_body = call(app, "GET", "/ui.js")
+
+      assert_equal 200, css_status
+      assert_equal "text/css; charset=utf-8", css_headers.fetch("Content-Type")
+      assert_includes css_body.join, ":root"
+      assert_equal 200, js_status
+      assert_equal "text/javascript; charset=utf-8", js_headers.fetch("Content-Type")
+      assert_includes js_body.join, "cred-align-csrf"
+      %w[repositories tokens presets].each do |tab|
+        assert_includes page_body.join, "id=\"tab-#{tab}\""
+        assert_includes page_body.join, "for=\"tab-#{tab}\""
+        assert_includes page_body.join, "data-panel=\"#{tab}\""
+      end
       assert_equal 200, data_status
       refute data.fetch("check_for_updates")
       assert_equal({}, data.fetch("rules"))
@@ -264,6 +287,36 @@ class ConfigServerTest < Minitest::Test
     )
   end
 
+  def test_ui_groups_tokens_by_shared_prefix_when_three_or_more
+    stdout = run_ui_scenario(<<~JAVASCRIPT)
+      (async () => {
+        const units = sandbox.groupedTokens([
+          { config: { name: "SONAR_TOKEN" } },
+          { config: { name: "GH_TOKEN" } },
+          { config: { name: "AWS_SECRET" } },
+          { config: { name: "GH_USER" } },
+          { config: { name: "AWS_KEY" } },
+          { config: { name: "PLAIN" } },
+          { config: { name: "AWS_REGION" } }
+        ]);
+        process.stdout.write(JSON.stringify(units.map((unit) => [unit.title, unit.entries.map((e) => e.config.name)])));
+      })().catch((error) => { console.error(error); process.exit(1); });
+    JAVASCRIPT
+
+    skip unless stdout
+
+    assert_equal(
+      [
+        ["AWS", %w[AWS_KEY AWS_REGION AWS_SECRET]],
+        [nil, ["GH_TOKEN"]],
+        [nil, ["GH_USER"]],
+        [nil, ["PLAIN"]],
+        [nil, ["SONAR_TOKEN"]]
+      ],
+      JSON.parse(stdout)
+    )
+  end
+
   def test_rack_app_rejects_untrusted_host_and_remote_addresses
     with_rack_app do |app, _config_path|
       bad_host = call(app, "GET", "/api/data", host: "attacker.example:8043")
@@ -303,6 +356,7 @@ class ConfigServerTest < Minitest::Test
         },
         createElement() { return node(); },
         createTextNode(text) { return { textContent: String(text) }; },
+        querySelector() { return { content: "test-csrf" }; },
         addEventListener() {},
         hidden: false
       };
@@ -349,8 +403,7 @@ class ConfigServerTest < Minitest::Test
   end
 
   def extract_browser_script
-    html = File.read(File.expand_path("../lib/cred_align_flow/config_ui.html", __dir__), encoding: "UTF-8")
-    html.scan(%r{<script nonce="__CSP_NONCE__">(.*?)</script>}m).flatten.join("\n").gsub("__CSRF_TOKEN__", "test-csrf")
+    File.read(File.expand_path("../lib/cred_align_flow/config_ui.js", __dir__), encoding: "UTF-8")
   end
 
   def assert_update_check_opt_in(script)

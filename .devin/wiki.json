@@ -42,7 +42,7 @@
     },
     {
       "title": "Local Configuration UI",
-      "purpose": "The `ui` command: config_server.rb, config_rack_app.rb, config_ui.ru, config_ui.html, and ui_metadata.rb implementing a local Rack browser editor for per-repository token rules. See README.ui.md.",
+      "purpose": "The `ui` command: config_server.rb, config_rack_app.rb, config_ui.ru, and the config_ui.html/config_ui.css/config_ui.js page assets plus ui_metadata.rb implementing a local Rack browser editor for per-repository token rules. See README.ui.md.",
       "parent": "Overview"
     },
     {

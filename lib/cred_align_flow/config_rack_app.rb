@@ -50,6 +50,10 @@ module CredAlignFlow
       case [env["REQUEST_METHOD"], env["PATH_INFO"]]
       when ["GET", "/"]
         html_response
+      when ["GET", "/ui.css"]
+        asset_response("config_ui.css", "text/css; charset=utf-8")
+      when ["GET", "/ui.js"]
+        asset_response("config_ui.js", "text/javascript; charset=utf-8")
       when ["GET", "/api/data"]
         json_response(with_csrf(@editor.data))
       when ["GET", "/api/update"]
@@ -120,21 +124,26 @@ module CredAlignFlow
     end
 
     def html_response
-      nonce = SecureRandom.hex(16)
       template = File.read(File.join(__dir__, "config_ui.html"), encoding: "UTF-8")
       headers = security_headers.merge(
         "Content-Type" => "text/html; charset=utf-8",
         "Content-Security-Policy" => [
           "default-src 'none'",
-          "script-src 'nonce-#{nonce}'",
-          "style-src 'nonce-#{nonce}'",
+          "script-src 'self'",
+          "style-src 'self'",
           "connect-src 'self'",
           "base-uri 'none'",
           "form-action 'self'",
           "frame-ancestors 'none'"
         ].join("; ")
       )
-      [200, headers, [template.gsub("__CSP_NONCE__", nonce).gsub("__CSRF_TOKEN__", @csrf_token)]]
+      [200, headers, [template.gsub("__CSRF_TOKEN__", @csrf_token)]]
+    end
+
+    # Static page assets ship as files next to this source file and are
+    # served verbatim; only same-origin loads are allowed by the CSP.
+    def asset_response(name, content_type)
+      [200, security_headers.merge("Content-Type" => content_type), [File.read(File.join(__dir__, name))]]
     end
 
     def json_response(data, status: 200)
