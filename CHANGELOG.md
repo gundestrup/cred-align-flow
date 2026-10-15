@@ -87,6 +87,12 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   (`[config-ui] POST /api/preview -> 422: …`) so a stuck draft can be
   diagnosed from the terminal that launched `ui` — previously the
   error text only existed inside the HTTP response.
+- Secret value, provider auth, and fingerprint-key resolution now read
+  an injectable `CredAlignFlow.environment` (identical to `ENV` at
+  runtime) which the in-process test suite replaces with an empty map —
+  previously an ambient credential variable, like the `SONAR_TOKEN`
+  exported to the SonarCloud CI job, leaked into test fixtures as a
+  real secret value.
 
 ## [0.1.0] - 2026-10-15
 

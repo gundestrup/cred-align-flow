@@ -4,6 +4,8 @@ require "date"
 require "time"
 require "yaml"
 
+require_relative "environment"
+
 module CredAlignFlow
   class Config
     DEFAULT_NAMES = [
@@ -295,7 +297,7 @@ module CredAlignFlow
 
     def value_for(secret, env_values)
       ref = value_ref(secret)
-      value = env_values[ref] || ENV.fetch(ref, nil)
+      value = env_values[ref] || CredAlignFlow.environment.fetch(ref, nil)
       return nil if value.nil? || value.empty?
 
       value

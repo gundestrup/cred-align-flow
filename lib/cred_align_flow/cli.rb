@@ -5,6 +5,8 @@ require "io/console"
 require "json"
 require "optparse"
 
+require_relative "environment"
+
 module CredAlignFlow
   class CLI
     COMMANDS = %w[doctor inventory pull plan diff check apply prune ui scaffold help].freeze
@@ -683,7 +685,7 @@ module CredAlignFlow
 
       missing_auth = config.source_ids.select do |source_id|
         auth_ref = config.source(source_id)["auth_env"]
-        auth_ref && env_values[auth_ref].to_s.empty? && ENV[auth_ref].to_s.empty?
+        auth_ref && env_values[auth_ref].to_s.empty? && CredAlignFlow.environment[auth_ref].to_s.empty?
       end
       problems = report_missing_auth(config, missing_auth)
       problems += report_missing_values(config, env_values)

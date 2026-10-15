@@ -5,6 +5,8 @@ require "fileutils"
 require "openssl"
 require "securerandom"
 
+require_relative "environment"
+
 module CredAlignFlow
   # Keyed fingerprints of secret values. The HMAC key lives in a private
   # local key file next to the env file; fingerprints are credential-derived
@@ -27,7 +29,7 @@ module CredAlignFlow
       # The environment variable wins over the key file — it lets the key
       # live in a password manager or be fixed deterministically in tests.
       def key
-        env_key = ENV.fetch(ENV_KEY, nil)
+        env_key = CredAlignFlow.environment.fetch(ENV_KEY, nil)
         return env_key unless env_key.nil? || env_key.empty?
 
         @key

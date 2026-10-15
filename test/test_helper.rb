@@ -30,6 +30,12 @@ require "cred_align_flow"
 # reproducible; CLI subprocess fixtures pass an isolated key through ENV.
 CredAlignFlow::Fingerprint.key = "test-only fingerprint key"
 
+# In-process tests must not see ambient credential variables — a CI
+# SONAR_TOKEN or a developer's GH_TOKEN would otherwise resolve through
+# the env fallbacks and corrupt fixtures. Subprocess fixtures pass their
+# own isolated ENV, so this only affects the test process itself.
+CredAlignFlow.environment = {}
+
 module TestSupport
   def self.run_cli(fake_gh, *, environment_overrides: {})
     environment = fake_gh.environment.merge(environment_overrides)

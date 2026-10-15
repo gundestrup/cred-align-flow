@@ -6,6 +6,8 @@ require "net/http"
 require "timeout"
 require "uri"
 
+require_relative "../environment"
+
 module CredAlignFlow
   module Providers
     class Forgejo < Provider
@@ -258,7 +260,7 @@ module CredAlignFlow
         auth_ref = @source["auth_env"]
         return nil if auth_ref.to_s.empty?
 
-        token = @env_values[auth_ref] || ENV.fetch(auth_ref, nil)
+        token = @env_values[auth_ref] || CredAlignFlow.environment.fetch(auth_ref, nil)
         raise ProviderError, "Forgejo auth_env #{auth_ref} is not set" if token.to_s.empty?
 
         token

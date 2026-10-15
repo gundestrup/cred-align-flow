@@ -349,6 +349,34 @@ class ConfigTest < Minitest::Test
     end
   end
 
+  def test_value_resolution_uses_the_injected_process_environment
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "config.yml")
+      File.write(path, YAML.dump(
+                         "version" => 1,
+                         "state_file" => File.join(dir, "state.json"),
+                         "sources" => { "github-main" => { "type" => "github", "owner" => "example" } },
+                         "secrets" => [{ "name" => "SONAR_TOKEN" }]
+                       ))
+      config = CredAlignFlow::Config.new(path)
+      secret = config.secrets.first
+      previous = CredAlignFlow.environment
+
+      # The env-file map wins; the injected process environment is the
+      # fallback — and ambient variables outside it never resolve.
+      CredAlignFlow.environment = { "SONAR_TOKEN" => "from-process-env" }
+
+      assert_equal "from-env-file", config.value_for(secret, { "SONAR_TOKEN" => "from-env-file" })
+      assert_equal "from-process-env", config.value_for(secret, {})
+
+      CredAlignFlow.environment = {}
+
+      assert_nil config.value_for(secret, {})
+    ensure
+      CredAlignFlow.environment = previous
+    end
+  end
+
   def test_fingerprint_key_file_rejects_broad_permissions
     Dir.mktmpdir do |dir|
       key_path = File.join(dir, ".digest-key")

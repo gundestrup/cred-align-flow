@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require_relative "cred_align_flow/environment"
 require_relative "cred_align_flow/version"
 require_relative "cred_align_flow/errors"
 require_relative "cred_align_flow/atomic_file"
