@@ -1,8 +1,10 @@
 # Local secrets and generated state must never be scanned — whatever the
 # scan target is. config/ is gitignored and holds env values, rules, and
 # inventory; the rest are value/key files wherever they may live.
-config/
-coverage/
+# Dir patterns are root-anchored — a bare `config/` would also swallow
+# any nested `config/` dir (gitignore semantics).
+/config/
+/coverage/
 **/.env
 **/.env.*
 **/secrets.env

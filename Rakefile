@@ -48,7 +48,7 @@ task :semgrep do
     # so Semgrep Pro/registry rules would be licensed — adopting them
     # needs a SEMGREP_APP_TOKEN and makes the scan network-dependent.
     sh "semgrep scan --config .semgrep.yml --metrics off " \
-       "--disable-version-check --error --quiet lib/ bin/ Rakefile"
+       "--disable-version-check --error --quiet ."
   elsif ENV["SEMGREP_REQUIRED"] == "1"
     abort "semgrep is required (SEMGREP_REQUIRED=1) but not installed"
   else

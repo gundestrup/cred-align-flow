@@ -223,7 +223,7 @@ module CredAlignFlow
         # argv-form exec (no shell): every non-static argument is a
         # validated GitHub name or a static flag, and secret values
         # travel via stdin only.
-        stdin, stdout, stderr, wait_thr = Open3.popen3( # NOSONAR nosemgrep: dangerous-exec
+        stdin, stdout, stderr, wait_thr = Open3.popen3( # NOSONAR nosemgrep: ruby.lang.security.dangerous-exec.dangerous-exec
           command_env(require_auth: require_auth, include_auth: include_auth), "gh", *arguments
         )
         stdout_reader = Thread.new { stdout.read }

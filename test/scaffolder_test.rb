@@ -85,7 +85,7 @@ class ScaffolderTest < Minitest::Test
       CredAlignFlow::Scaffolder.new(path).apply!(["EXTRA_TOKEN"], config, { "EXTRA_TOKEN" => "x" }, targets: target_scope)
       text = File.read(path)
 
-      assert_equal 1, text.scan(/^secrets:/).length
+      assert_equal 1, text.scan(/^secrets:/).length # nosemgrep: ruby-redos-string-scan -- anchored literal prefix
       assert_includes text, "# scaffold: EXTRA_TOKEN"
       assert_equal 1, CredAlignFlow::Config.new(path).secrets.length
     end
