@@ -23,6 +23,10 @@ module CredAlignFlow
       puts "Config UI: http://127.0.0.1:#{@port}/"
       exec(
         {
+          # Itsi crashes on US-ASCII locales while loading its bundled docs
+          # (engineering-memory: tools/ruby-web-servers.md).
+          "LANG" => "en_US.UTF-8",
+          "LC_ALL" => "en_US.UTF-8",
           "CRED_ALIGN_FLOW_CONFIG_PATH" => @editor.config_path,
           "CRED_ALIGN_FLOW_ENV_PATH" => @editor.env_path,
           "CRED_ALIGN_FLOW_STATE_PATH" => @editor.state_path,
