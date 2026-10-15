@@ -37,7 +37,7 @@ bundle exec rake check
 
 `rake check` runs version/changelog consistency, tests, RuboCop, bundler-audit, non-blocking flay/flog reports, and Semgrep CE (which self-skips when the binary is absent; rules live in `.semgrep.yml`). `rake flay` prints the structural duplication report on its own — it is informational, not a quality gate. `rake test:integration` runs the env-gated disposable-service tests under `test/integration/` and is deliberately outside `check` — it skips cleanly without `CRED_ALIGN_FLOW_FORGEJO_URL`/`CRED_ALIGN_FLOW_FORGEJO_TOKEN` pointing at a loopback service.
 
-The tests must not contact GitHub or require real credentials. See `test/integration/README.md` before adding any pull or push integration test. `test/config_server_test.rb` runs the embedded UI script in a Node VM when Node.js is present (CI sets `NODE_REQUIRED=1`) and falls back to static ordering assertions without it.
+The tests must not contact GitHub or require real credentials. See `test/integration/README.md` before adding any pull or push integration test. `test/config_server_test.rb` runs the UI's extracted `config_ui.js` script in a Node VM when Node.js is present (CI sets `NODE_REQUIRED=1`) and falls back to static ordering assertions without it.
 
 ## Release process
 

@@ -31,6 +31,17 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- The config UI is organized into three sections — Repositories, Tokens,
+  and Presets — switched by pure CSS (`:has()` over hidden radio inputs,
+  no script or URL state). Token cards sort alphabetically, group under
+  a `PREFIX` heading when three or more share a `PREFIX_` prefix, and
+  fold out the repositories each token is enabled on; repository cards
+  fold their not-assigned token lists.
+- The UI page assets moved out of the HTML template into `config_ui.css`
+  and `config_ui.js`, served as same-origin files. The CSP switched from
+  per-request nonces to `script-src 'self'`/`style-src 'self'` — no
+  inline code is permitted at all — and the page carries its CSRF token
+  in a meta tag.
 - The UI save/preview payload now carries `rules`, `token_defaults`,
   `token_presets`, and `repo_presets` together; every save revalidates
   the merged configuration and the preset files' references.
