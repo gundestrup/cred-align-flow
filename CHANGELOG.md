@@ -5,6 +5,17 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The CI `sonar` job is restored — Automatic Analysis is disabled for
+  the project on sonarcloud.io, so CI-based scanning carries the
+  analysis (and the RuboCop/SimpleCov report imports it supports, which
+  Automatic Analysis cannot). `sonar-project.properties` again
+  documents keeping Automatic Analysis off; the scan step still
+  self-skips while `SONAR_TOKEN` is absent.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added

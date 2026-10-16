@@ -50,6 +50,31 @@ jobs:
           files: coverage/.resultset.json
           fail_ci_if_error: false
 
-  # No CI sonar job: the project uses SonarCloud Automatic Analysis, which
-  # conflicts with CI-based scanning. sonar-project.properties remains for
-  # manual/local sonar-scanner runs.
+  sonar:
+    name: SonarCloud
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@651ff0d62c5c79bed6d53ec518387aae20e72c1a # v1.329.0
+        with:
+          ruby-version: "3.4.10"
+          bundler-cache: true
+
+      - name: Generate coverage and lint reports
+        run: |
+          bundle exec rake test
+          bundle exec rubocop --format json --out coverage/rubocop.json
+
+      # Self-skips until SONAR_TOKEN is added to the repository secrets;
+      # requires Automatic Analysis to stay disabled for the project on
+      # sonarcloud.io (the scanner rejects the upload otherwise).
+      - name: SonarCloud scan
+        if: ${{ env.SONAR_TOKEN != '' }}
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
