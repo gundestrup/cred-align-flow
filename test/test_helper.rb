@@ -39,9 +39,17 @@ CredAlignFlow.environment = {}
 module TestSupport
   def self.run_cli(fake_gh, *, environment_overrides: {})
     environment = fake_gh.environment.merge(environment_overrides)
-    # Subprocess coverage: bin/cred-align-flow starts SimpleCov when this is
-    # set; distinct command names let the parent's resultset merge it in.
-    environment["CRED_ALIGN_FLOW_SIMPLECOV"] = "1" if defined?(SimpleCov)
+    if defined?(SimpleCov)
+      # Subprocess coverage: bin/cred-align-flow starts SimpleCov when this is
+      # set; distinct command names let the parent's resultset merge it in.
+      environment["CRED_ALIGN_FLOW_SIMPLECOV"] = "1"
+      # The stripped environment must still resolve simplecov: CI installs the
+      # bundle outside the default gem path (bundler-cache), so pass the
+      # bundler/gem lookup variables through or the subprocess silently runs
+      # uninstrumented.
+      ENV.each { |key, value| environment[key] = value if key.start_with?("BUNDLE_", "GEM_") }
+      %w[RUBYLIB RUBYOPT].each { |key| environment[key] = ENV[key] if ENV.key?(key) }
+    end
     executable = File.expand_path("../bin/cred-align-flow", __dir__)
     Open3.capture3(
       environment,

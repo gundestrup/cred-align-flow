@@ -16,6 +16,18 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   documents keeping Automatic Analysis off; the scan step still
   self-skips while `SONAR_TOKEN` is absent.
 
+### Fixed
+
+- The SonarCloud quality gate turns green again on new code. The first
+  CI-scanner analysis exposed two coverage defects: CLI subprocess
+  fixtures ran uninstrumented because the stripped test environment
+  dropped the bundler/gem lookup variables, leaving `require "simplecov"`
+  to fail silently under `bundler-cache` — the variables now pass through
+  when SimpleCov is loaded; and `config_ui.js` counted 856 executable
+  lines at 0% even though the Node-VM suite exercises it — it is now in
+  `sonar.coverage.exclusions`, keeping its issue/duplication analysis
+  without demanding JS coverage tooling the project does not have.
+
 ## [0.2.0] - 2026-10-15
 
 ### Added
