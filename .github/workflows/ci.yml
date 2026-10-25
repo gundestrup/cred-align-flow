@@ -19,7 +19,7 @@ jobs:
       matrix:
         ruby:
           - "3.4.10" # declared floor (Gemfile ruby >= 3.4.10)
-          - "3.4.11" # latest 3.4 patch release
+          - "3.4.12" # latest 3.4 patch release
 
     steps:
       - name: Checkout

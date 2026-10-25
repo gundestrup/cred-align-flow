@@ -9,6 +9,8 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ### Changed
 
+- Development Ruby pin bumped to 3.4.12 (`.ruby-version`, CI matrix,
+  `Gemfile.lock`); the declared floor remains 3.4.10.
 - The CI `sonar` job is restored — Automatic Analysis is disabled for
   the project on sonarcloud.io, so CI-based scanning carries the
   analysis (and the RuboCop/SimpleCov report imports it supports, which
