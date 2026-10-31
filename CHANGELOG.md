@@ -5,13 +5,19 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-10-31
 
 ### Changed
 
 - Development Ruby pin bumped to 3.4.12 (`.ruby-version`, CI matrix,
   `Gemfile.lock`); the declared floor remains 3.4.10. `ruby/setup-ruby`
-  bumped to v1.335.0 (3.4.12 builds landed in v1.334.0).
+  bumped to v1.336.0.
+- CI and development dependencies refreshed to latest: `semgrep`
+  1.180.0 → 1.183.0, `sonarqube-scan-action` v8.3.0 → v8.4.0,
+  `rubocop` 1.92.0 → 1.92.2, `parser` 3.3.12.0 → 3.3.13.0,
+  `rack` 3.2.7 → 3.2.8, and Bundler 4.0.21 → 4.0.23. `json` and
+  `prism` stay on their current majors, capped by `itsi-server`,
+  `flay`, `minitest`, and `rubocop-ast`.
 - The CI `sonar` job is restored — Automatic Analysis is disabled for
   the project on sonarcloud.io, so CI-based scanning carries the
   analysis (and the RuboCop/SimpleCov report imports it supports, which
@@ -326,6 +332,7 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.2.1]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.1
 [0.2.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.1.0
 [0.0.4]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.0.4
