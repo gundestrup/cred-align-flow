@@ -5,6 +5,15 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-11-03
+
+### Fixed
+
+- Config UI: scope-field merges in `config_ui.js` use object spread
+  instead of `Object.assign`, so a `__proto__` key carried in preset or
+  rules-file data lands as an inert own property rather than invoking
+  the prototype setter (Semgrep `insecure-object-assign`).
+
 ## [0.2.1] - 2026-10-31
 
 ### Changed
@@ -332,6 +341,7 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.2.2]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.2
 [0.2.1]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.1
 [0.2.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.0
 [0.1.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.1.0
