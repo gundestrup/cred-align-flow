@@ -38,6 +38,8 @@ end
 def capture_ui_banner(fixture)
   env = DemoFixture.ui_env(fixture)
   reader, writer = IO.pipe
+  # argv-form spawn never reaches a shell; the only variable argument is
+  # the fixture's own Dir.mktmpdir config path, never external input.
   pid = spawn(
     env, RbConfig.ruby, "bin/cred-align-flow", "--config", fixture.config_path, "ui",
     out: writer, err: writer, chdir: File.expand_path("../../", __dir__)
