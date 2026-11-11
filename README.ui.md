@@ -2,6 +2,11 @@
 
 Part of the [cred-align-flow](README.md) documentation.
 
+<picture>
+  <source srcset="docs/assets/demo/ui-flow.avif" type="image/avif" />
+  <img src="docs/assets/demo/ui-flow.webp" alt="cred-align-flow configuration UI — editing a repository rule, applying a preset, saving, and refreshing inventory" />
+</picture>
+
 Start the local browser editor with Bundler (Itsi is a development-only dependency):
 
 ```bash

@@ -11,7 +11,7 @@ Reviewed: 2026-10-10. Post-fix review: 2026-10-11. Scope: the local working tree
 | F01 | DONE | Apply A → rotate B → scaffold → plan update → apply B is covered end-to-end with a fake provider. |
 | F02 | DONE | Env-aware display revision; rules-save revision is separately documented. |
 | F03 | DONE | Scaffolding takes a sibling lock, validates generated YAML before atomic replacement, and preserves unsupported input. |
-| F04 | DONE | Imports require `--only` plus exact repeated `--target SOURCE|CONTEXT|OWNER/REPO`; same-run ignores are excluded. |
+| F04 | DONE | Imports require `--only` plus exact repeated `--target SOURCE\|CONTEXT\|OWNER\|REPO`; same-run ignores are excluded. |
 | F05 | DONE | Atomic restrictive writes, directory sync, lock/transaction merge, process-concurrency and post-provider state-save failure tests. |
 | F06 | DONE | Canonical role validation covers config, env, rules, state, fingerprint key, and CLI overrides. |
 | F07 | DONE | Applied baselines require stable repository and source identities; legacy/unbound records are conservative. |
@@ -30,7 +30,6 @@ Reviewed: 2026-10-10. Post-fix review: 2026-10-11. Scope: the local working tree
 | F20 | DONE | Regression coverage now includes CLI/provider faults, rotation, persistence, Node VM async scenarios, and `rake test:integration` — an env-gated loopback-only disposable Forgejo service test that exercises the real adapter (`rake test:integration` skips cleanly without it). A full real-browser suite remains open by deliberate scope decision. |
 | F21 | DONE | Ruby 3.4.10 is the declared/tested floor; CI requires pinned Semgrep. Local Semgrep absence is reported separately and fails closed when required. |
 | F22 | DONE | Assignment, inventory validity, and file-role checks are shared; UI status vocabulary, digest pills, and field help now come from `UiMetadata` served via the API payload, with a drift-guard test asserting every planner action exists in `UiMetadata::STATUSES`. |
-
 
 **The implementation is materially safer and more correct than the version assessed in the original review, but this is not a provider-service or browser certification.** Explicitly scoped scaffolding, atomic/locked state writes, keyed fingerprints, path-role validation, inventory freshness, safer apply approval/rechecks, and sanitized provider I/O are now implemented and tested with synthetic fixtures.
 

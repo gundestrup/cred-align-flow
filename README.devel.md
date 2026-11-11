@@ -44,3 +44,36 @@ for file in test/*_test.rb; do ruby -Ilib -Itest "$file"; done
 ```
 
 The CLI runtime is Ruby-standard-library-only; tests use Minitest and the development tools in the `Gemfile`. They do not contact GitHub. `test/github_cli_test.rb` runs the CLI against a generated fake `gh` executable with isolated credentials and a socket guard. It covers command arguments, stdin-only value delivery, adoption, refresh/apply flow, and limits, but does not establish GitHub service-side compatibility. `test/forgejo_provider_test.rb` exercises the real HTTP adapter against a loopback `TCPServer`, not a Forgejo service. `test/config_server_test.rb` executes the embedded UI script in a Node VM for out-of-order poll/preview responses, in-flight saves, and CSRF retry; without Node.js it runs static ordering assertions instead, and CI sets `NODE_REQUIRED=1` so the dynamic paths always execute there. This is still not a full browser certification. `test/integration/forgejo_service_test.rb` (`bundle exec rake test:integration`, not part of `check`) runs the real adapter against the disposable Forgejo Compose service when `CRED_ALIGN_FLOW_FORGEJO_URL`/`CRED_ALIGN_FLOW_FORGEJO_TOKEN` point at a loopback service; GitHub writes are never part of automated tests.
+
+### Demo screencasts
+
+`docs/assets/demo/` holds the animated `cli-flow` and `ui-flow` demos
+embedded in the READMEs. They are produced by the pure-Ruby CDP pipeline
+in `scripts/e2e/` — no npm packages; Node is not needed. The pipeline
+reuses the e2e fixture machinery (`test/support/fixtures.rb`: `FakeGh`,
+`run_cli`), so the demos run the real binary and the real `ui` server
+against a synthetic `demo-org` fixture; nothing contacts a provider and
+no secret value ever reaches a frame.
+
+```bash
+# -> docs/assets/demo/cli-flow.mp4 + tmp/screencast-frames/cli/
+ruby scripts/e2e/screencast_cli.rb
+# -> docs/assets/demo/ui-flow.mp4 + tmp/screencast-frames/ui(-9fps)/
+ruby scripts/e2e/screencast_ui.rb
+
+ruby scripts/e2e/convert.rb tmp/screencast-frames/cli \
+    --name cli-flow --fps 9 --scale 880
+ruby scripts/e2e/convert.rb tmp/screencast-frames/ui-9fps \
+    --name ui-flow --fps 9 --scale 880
+```
+
+Capture uses headless Chrome/Chromium (`CAF_DEMO_CHROME` or `CHROME_PATH`
+overrides the lookup) driving `Page.startScreencast` over a hand-rolled
+WebSocket; frames land as lossless PNGs under the gitignored
+`tmp/screencast-frames/`. `recording.rb` resamples sparse repaint frames
+at their real timestamps so static holds play at true duration.
+`convert.rb` emits `.apng`, `.webp` (via `img2webp`), `.avif` (SVT-AV1,
+CRF 35), and an `.svg` wrapper; `avifdec --info` verifies the sequence.
+Tool requirements: Chrome, `ffmpeg`, `img2webp`, `webpinfo`, and `avifdec`
+on the host. The scripts are development tooling only — none of it ships
+in the CLI runtime and `rake check` does not run captures.

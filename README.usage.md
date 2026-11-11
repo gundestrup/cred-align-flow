@@ -94,7 +94,9 @@ The top-level `scaffold_action:` setting changes what happens when names are imp
 - `default` (the default): imports require `--only` plus `--target`; plain `scaffold` only lists unimported names.
 - `import`: `scaffold` (all names) or `scaffold --only NAMES` writes the entries into the YAML as **commented draft blocks** marked `# scaffold-draft:` — they stay inactive until you uncomment each entry. Drafted names are not offered again.
 
+<!-- markdownlint-disable-next-line MD038 — the trailing space inside `# ` is literal: removing "# " (hash and space) is what activates a draft line -->
 Imports under `import` or explicit `--target` tuples write the **full field set** so every option is visible: `visibility` (with its enum), `sources`, `targets` listing every context each configured provider supports (unselected contexts and owner scopes stay commented, e.g. Forgejo `user` notes its `user_secrets: true` requirement), the real `exclude_repositories`/`repository_rules` narrowing for targeted imports, and optional `exclude_sources`/narrowing templates as comments. Inside a draft block, comment lines carry a second `#` (`# #`), so removing one `# ` per line activates the entry while optional fields stay commented for the user to enable, delete, or change.
+
 - `auto`: imports the entries as minimal **inactive** definitions — `name`/`value_env`, digest, version, plus an explicit empty `targets` list per configured provider type. The token exists (it appears in the UI, its digest syncs, stale rules stay attached to the name) but plans and applies nothing anywhere until scope is granted: assign `sources`/`targets` via the UI token card (`token_defaults`), a preset, or a repository rule — the UI overlay overrides the empty YAML targets without editing the file.
 
 Explicit `--target` tuples always produce active targeted entries, whatever the action.

@@ -17,12 +17,19 @@ Style/StringLiterals:
 Layout/LineLength:
   Max: 130
 
+Metrics/ModuleLength:
+  Exclude:
+    # Demo screencast fixtures are data-driven support code, like tests.
+    - test/**/*
+    - scripts/**/*
+
 Metrics/MethodLength:
   Max: 30
   Exclude:
     - lib/cred_align_flow/cli.rb
     - lib/cred_align_flow/planner.rb
     - test/**/*
+    - scripts/**/*
 
 Metrics/ClassLength:
   Max: 250

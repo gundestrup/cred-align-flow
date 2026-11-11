@@ -5,6 +5,35 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-11-11
+
+### Added
+
+- Animated demos of the real CLI and the local configuration UI under
+  `docs/assets/demo/` (`cli-flow`, `ui-flow`: animated AVIF plus
+  WebP/APNG/SVG/MP4 fallbacks). They are generated from the offline e2e
+  fixture — fake `gh`, fictional `demo-org` repositories and synthetic
+  token values — by a pure-Ruby CDP screencast pipeline in
+  `scripts/e2e/` (no npm packages, no real credentials, no provider
+  writes). Regeneration is documented in `README.devel.md`.
+- `test/support/fixtures.rb` — the e2e fixture machinery (`FakeGh`,
+  `run_cli`, repository metadata) extracted from `test_helper.rb` so the
+  demo scripts exercise exactly what the tests exercise.
+
+### Changed
+
+- Development dependencies refreshed: `minitest` 6.0.6 → 6.1.0 and
+  `rubocop-ast` 1.50.0 → 1.51.0. `json` and `prism` remain on their
+  current majors — `itsi-server` requires `json ~> 2` and `prism ~> 1.4`,
+  and `flay`/`flog` cap `prism ~> 1.7`.
+- CI pins refreshed: `ruby/setup-ruby` v1.336.0 → v1.338.0,
+  `sonarqube-scan-action` v8.4.0 → v8.4.1, and Semgrep CE
+  1.183.0 → 1.185.0.
+- `.markdownlint.json` extended to encode the docs conventions
+  (paragraph-per-line prose, `<picture>` demo embeds, compact tables);
+  `README.usage.md`/`cred-align-flow.analysis.md` lint defects fixed
+  including a table row whose unescaped `|` dropped rendered cells.
+
 ## [0.2.2] - 2026-11-03
 
 ### Fixed
@@ -341,6 +370,7 @@ services — review every printed plan before approving a write.
   disposable-Forgejo integration test.
 - AGPL-3.0-only license and `DISCLAIMER.md`.
 
+[0.2.3]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.3
 [0.2.2]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.2
 [0.2.1]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.1
 [0.2.0]: https://github.com/gundestrup/cred-align-flow/releases/tag/v0.2.0

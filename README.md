@@ -10,7 +10,19 @@
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 [![Semgrep CE](https://img.shields.io/badge/security-Semgrep%20CE-informational)](.semgrep.yml)
 
-Provider-agnostic secret and CI variable synchronization with drift detection across repository hosting platforms.
+Provider-agnostic secret and CI variable synchronization with drift detection across repository hosting platforms.  
+
+CLI.
+<picture>
+  <source srcset="docs/assets/demo/cli-flow.avif" type="image/avif" />
+  <img src="docs/assets/demo/cli-flow.webp" alt="cred-align-flow CLI — doctor, inventory, plan, check, apply, and ui run against an offline fixture" />
+</picture>
+
+UI.  
+<picture>
+  <source srcset="docs/assets/demo/ui-flow.avif" type="image/avif" />
+  <img src="docs/assets/demo/ui-flow.webp" alt="cred-align-flow configuration UI — editing a repository rule, applying a preset, saving, and refreshing inventory" />
+</picture>
 
 The current implementation supports GitHub Actions/Dependabot repository secrets and pull-only Forgejo Actions secrets. The internal source/target model is intended to support GitLab CI variables and additional Forgejo/Gitea operations later.
 
@@ -47,10 +59,28 @@ Full setup details and the configuration reference live in [README.config.md](RE
 
 Full command reference, plan statuses, and the rotation workflow: [README.usage.md](README.usage.md).
 
+## Demos
+
+Recorded against an offline fixture — a fake `gh` and fictional `demo-org` repositories with synthetic values; no real credentials or provider writes are involved.
+
+CLI — `doctor`, `inventory`, `plan`, `check`, `apply`, and `ui`:
+
+<picture>
+  <source srcset="docs/assets/demo/cli-flow.avif" type="image/avif" />
+  <img src="docs/assets/demo/cli-flow.webp" alt="cred-align-flow CLI — doctor, inventory, plan, check, apply, and ui run against an offline fixture" />
+</picture>
+
+Config UI — repository rules, presets, save, and the read-only inventory refresh:
+
+<picture>
+  <source srcset="docs/assets/demo/ui-flow.avif" type="image/avif" />
+  <img src="docs/assets/demo/ui-flow.webp" alt="cred-align-flow configuration UI — editing a repository rule, applying a preset, saving, and refreshing inventory" />
+</picture>
+
 ## Documentation
 
 | Document | Covers |
-|---|---|
+| --- | --- |
 | [README.safety.md](README.safety.md) | Warnings, irreversibility, security model |
 | [README.config.md](README.config.md) | Requirements, local setup, YAML configuration, UI-managed rules file |
 | [README.usage.md](README.usage.md) | Command reference, plan statuses, rotation |
