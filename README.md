@@ -1,6 +1,6 @@
-<!-- markdownlint-disable MD013 MD033 -->
+<!-- markdownlint-disable MD033 -->
 # cred-align-flow <a href="https://gundestrup.github.io/flow/"><img align="right" src="https://gundestrup.github.io/flow/assets/badges/part-of-flow.svg?v=2" alt="Part of Flow software" height="40"></a>
-<!-- markdownlint-enable MD013 MD033 -->
+<!-- markdownlint-enable MD033 -->
 
 [![CI](https://github.com/gundestrup/cred-align-flow/actions/workflows/ci.yml/badge.svg)](https://github.com/gundestrup/cred-align-flow/actions/workflows/ci.yml)
 [![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=gundestrup_cred-align-flow&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=gundestrup_cred-align-flow)
