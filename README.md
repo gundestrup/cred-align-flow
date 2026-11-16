@@ -7,7 +7,7 @@
 [![Coverage](https://sonarcloud.io/api/project_badges/measure?project=gundestrup_cred-align-flow&metric=coverage)](https://sonarcloud.io/summary/new_code?id=gundestrup_cred-align-flow)
 [![codecov](https://codecov.io/gh/gundestrup/cred-align-flow/graph/badge.svg)](https://codecov.io/gh/gundestrup/cred-align-flow)
 [![CodeFactor](https://www.codefactor.io/repository/github/gundestrup/cred-align-flow/badge)](https://www.codefactor.io/repository/github/gundestrup/cred-align-flow)
-[![DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/gundestrup/cred-align-flow)
+[<img src="https://devin.ai/assets/askdeepwiki.png" alt="DeepWiki" height="20"/>](https://deepwiki.com/gundestrup/cred-align-flow)
 [![Ruby >= 3.4.10](https://img.shields.io/badge/ruby-%3E%3D_3.4.10-cc342d?logo=ruby&logoColor=white)](https://www.ruby-lang.org/)
 [![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-blue.svg)](LICENSE)
 [![Semgrep CE](https://img.shields.io/badge/security-Semgrep%20CE-informational)](.semgrep.yml)
