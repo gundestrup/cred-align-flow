@@ -5,6 +5,13 @@ All notable changes to `cred-align-flow` are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Dev-tooling bumps: `flay` 2.14.4 → 2.14.5, `rubocop` 1.92.2 → 1.92.3
+  (plus transitive `parser` 3.3.14.0, `regexp_parser` 2.13.4).
+
 ## [0.2.3] - 2026-11-11
 
 ### Added
