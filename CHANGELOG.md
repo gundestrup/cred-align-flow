@@ -11,6 +11,9 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 - Dev-tooling bumps: `flay` 2.14.4 → 2.14.5, `rubocop` 1.92.2 → 1.92.3
   (plus transitive `parser` 3.3.14.0, `regexp_parser` 2.13.4).
+- Development Ruby pin bumped to 3.4.13 (`.ruby-version`, CI matrix,
+  `Gemfile.lock`); the declared floor remains 3.4.10. `ruby/setup-ruby`
+  bumped to v1.343.0 so CI can resolve 3.4.13.
 
 ## [0.2.3] - 2026-11-11
 
